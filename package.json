@@ -8,8 +8,12 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
+    "@types/dotenv": "^6.1.1",
     "cookie": "^1.0.2",
+    "dotenv": "^17.2.1",
     "hono": "^4.9.4",
+    "pino": "^8.21.0",
+    "prom-client": "^14.2.0",
     "redis": "^5.8.2",
     "uuid": "^11.1.0"
   },
