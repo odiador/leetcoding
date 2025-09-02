@@ -1,96 +1,170 @@
-import { serve } from '@hono/node-server'
-import dotenv from 'dotenv'
-import { Hono } from 'hono'
-import type { RedisClientType } from 'redis'
-import { createClient } from 'redis'
-import { pino } from 'pino'
-import * as promClient from 'prom-client'
+import { serve } from '@hono/node-server';
+import { OpenAPIHono } from '@hono/zod-openapi';
+import { pino } from 'pino';
+import { LOG_LEVEL } from './config/env';
+import { createClient } from 'redis';
+import { initRedis } from './config/redis';
+import { authMiddleware, optionalAuthMiddleware } from './middlewares';
+import { authRoutes, cartRoutes, healthRoutes, orderRoutes, productRoutes } from './routes';
 
-dotenv.config()
+// Importar métricas centralizadas
+import {
+  register,
+  httpRequestDurationMs,
+  httpRequestsTotal,
+  redisLatency,
+  redisReconnections,
+} from './config/metrics';
 
-const app = new Hono()
+const app = new OpenAPIHono();
+
+// OpenAPI documentation
+app.doc('/doc', {
+  openapi: '3.0.0',
+  info: {
+    title: 'Mercador API',
+    version: '1.0.0',
+    description: 'Backend API for Mercador e-commerce platform',
+  },
+  servers: [{ url: 'http://localhost:3010' }],
+});
+
+app.get('/openapi', (c) => {
+  const html = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mercador API Docs</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@4/swagger-ui.css" />
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@4/swagger-ui-bundle.js"></script>
+    <script>
+      window.onload = function() {
+        SwaggerUIBundle({
+          url: '/doc',
+          dom_id: '#swagger-ui',
+          deepLinking: true,
+          presets: [SwaggerUIBundle.presets.apis]
+        });
+      };
+    </script>
+  </body>
+</html>`;
+  return c.html(html);
+});
 
 // Logger
-const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' })
+const logger = pino({ level: LOG_LEVEL });
 
-// Prometheus metrics
-promClient.collectDefaultMetrics()
-const httpRequestDurationMs = new promClient.Histogram({
-  name: 'http_request_duration_ms',
-  help: 'Duration of HTTP requests in ms',
-  labelNames: ['method', 'route', 'code'] as const,
-  buckets: [50, 100, 200, 300, 500, 1000]
-})
+// Redis client
+let redisClient: ReturnType<typeof createClient> | null = null;
 
-// Redis setup - prefer explicit host/port/password from environment to avoid URL-escaping issues
-const redisHost = process.env.REDIS_HOST ?? 'localhost'
-const redisPort = Number(process.env.REDIS_PORT ?? 6379)
-// prefer explicit REDIS_PASSWORD, otherwise try to extract from REDIS_URL if set
-const redisPassword = process.env.REDIS_PASSWORD ?? process.env.REDIS_URL?.match(/redis:\/\/:?([^@]+)@/)?.[1]
-let redisClient: ReturnType<typeof createClient> | null = null
+async function getRedisClient(logger: any): Promise<ReturnType<typeof createClient>> {
+  if (!redisClient) {
+    redisClient = await initRedis(logger);
 
-function initRedis() {
-  if (redisClient) return redisClient
-  const client = createClient({
-    socket: { host: redisHost, port: redisPort },
-    password: redisPassword
-  })
-  client.on('error', (err) => logger.error({ err }, 'Redis error'))
-  client.connect()
-    .then(() => logger.info(`Connected to Redis at ${redisHost}:${redisPort}`))
-    .catch((err) => logger.error({ err }, 'Failed to connect to Redis'))
-  redisClient = client
-  return client
+    // Contar reconexiones
+    redisClient.on('reconnecting', () => {
+      redisReconnections.inc();
+      logger.warn('Redis is reconnecting...');
+    });
+  }
+  return redisClient;
 }
 
-initRedis()
-
-// basic request timing middleware
+// Middleware para medir requests
 app.use('*', async (c, next) => {
-  const end = httpRequestDurationMs.startTimer()
-  const route = c.req.path
+  const end = httpRequestDurationMs.startTimer();
+  const route = c.req.path;
   try {
-    await next()
-    const status = c.res.status || 200
-    end({ method: c.req.method, route, code: String(status) })
+    await next();
+    const status = c.res.status || 200;
+
+    end({ method: c.req.method, route, code: String(status) });
+    httpRequestsTotal.inc({ method: c.req.method, route, code: String(status) });
   } catch (err) {
-    end({ method: c.req.method, route, code: '500' })
-    logger.error({ err }, 'Request handler error')
-    throw err
+    end({ method: c.req.method, route, code: '500' });
+    httpRequestsTotal.inc({ method: c.req.method, route, code: '500' });
+    logger.error({ err }, 'Request handler error');
+    throw err;
   }
-})
+});
 
+// Root
 app.get('/', (c) => {
-  logger.info('hit /')
-  return c.text('Hello Hono!')
-})
+  logger.info('hit /');
+  return c.text('Hello Hono!');
+});
 
-// Health endpoint to verify Redis connectivity
+// Apply middleware
+app.use('/cart/*', authMiddleware);
+app.use('/orders/*', authMiddleware);
+app.use('/auth/me', authMiddleware);
+app.use('/products/*', optionalAuthMiddleware);
+
+// Mount routes
+app.route('/health', healthRoutes);
+app.route('/auth', authRoutes);
+app.route('/products', productRoutes);
+app.route('/cart', cartRoutes);
+app.route('/orders', orderRoutes);
+
+// Health endpoint para Redis
 app.get('/redis', async (c) => {
   try {
-    if (!redisClient) initRedis()
-    const pong = await (redisClient as RedisClientType).ping()
-    return c.json({ redis: pong })
+    const client = await getRedisClient(logger);
+
+    const start = Date.now();
+    const pong = await client.ping();
+    const duration = Date.now() - start;
+
+    redisLatency.observe(duration);
+
+    return c.json({ redis: pong, latency_ms: duration });
   } catch (err) {
-    logger.error({ err }, 'Redis ping failed')
-    return c.json({ error: 'Redis not available' }, 503)
+    logger.error({ err }, 'Redis ping failed');
+    return c.json({ error: 'Redis not available' }, 503);
   }
-})
+});
 
 // Prometheus metrics endpoint
 app.get('/metrics', async (c) => {
   try {
-    const metrics = await promClient.register.metrics()
-    return c.text(metrics, 200, { 'Content-Type': promClient.register.contentType })
+    const metrics = await register.metrics();
+    return c.text(metrics, 200, { 'Content-Type': register.contentType });
   } catch (err) {
-    logger.error({ err }, 'Failed to collect metrics')
-    return c.text('error', 500)
+    logger.error({ err }, 'Failed to collect metrics');
+    return c.text('error', 500);
   }
-})
+});
 
-serve({
-  fetch: app.fetch,
-  port: 3000
-}, (info) => {
-  logger.info(`Server is running on http://localhost:${info.port}`)
-})
+// Error handler
+app.onError((err, c) => {
+  logger.error({ err }, 'Unhandled error');
+  return c.json({ success: false, error: 'Internal server error' }, 500);
+});
+
+// Start server
+serve(
+  {
+    fetch: app.fetch,
+    port: 3010,
+  },
+  (info) => {
+    logger.info(`Server is running on http://localhost:${info.port}`);
+  },
+);
+
+// Graceful shutdown
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, async () => {
+    if (redisClient) {
+      await redisClient.quit();
+      logger.info('Redis connection closed');
+    }
+    process.exit(0);
+  });
+}
