@@ -1,12 +1,15 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import jwt from 'jsonwebtoken'
+import { POST_LOGOUT_REDIRECT_URL } from '../config/env'
+import { supabase } from '../config/supabase'
 import * as userService from '../services/user.service'
-import { authMiddleware } from '../middlewares'
+import type { User } from '@supabase/supabase-js'
 
 const authRoutes = new OpenAPIHono()
 
 // Schemas
 const SignupSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(6),
   name: z.string().min(2)
 })
@@ -15,7 +18,7 @@ const SignupResponse = z.object({
   success: z.boolean(),
   data: z.object({
     id: z.string().uuid(),
-    email: z.string().email(),
+    email: z.email(),
     full_name: z.string(),
     role: z.string()
   })
@@ -49,9 +52,10 @@ const LogoutResponse = z.object({
 const MeResponse = z.object({
   success: z.boolean(),
   data: z.object({
-    id: z.string().uuid(),
+    id: z.uuid(),
     full_name: z.string(),
-    role: z.string()
+    role: z.string(),
+    email: z.email()
   })
 })
 
@@ -179,6 +183,12 @@ const loginGoogleRoute = createRoute({
 authRoutes.openapi(loginGoogleRoute, async (c) => {
   try {
     const { url } = await userService.loginWithGoogle()
+    // If called from a browser, redirect directly to the OAuth URL for manual testing
+    const accept = c.req.header('accept') || ''
+    if (accept.includes('text/html')) {
+      return c.redirect(url)
+    }
+
     return c.json({ success: true, url })
   } catch (error) {
     return c.json(
@@ -186,6 +196,144 @@ authRoutes.openapi(loginGoogleRoute, async (c) => {
       401
     )
   }
+})
+
+// OAuth callback used by client-side redirect page: receives access_token from the browser
+const oauthCallbackSchema = z.object({ access_token: z.string().min(1) })
+
+const oauthCallbackRoute = createRoute({
+  method: 'post',
+  path: '/oauth/callback',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: oauthCallbackSchema
+        }
+      },
+      required: true
+    }
+  },
+  responses: {
+    200: {
+      description: 'OAuth callback accepted',
+      content: {
+        'application/json': {
+          schema: MeResponse
+        }
+      }
+    },
+    400: { description: 'Missing token' },
+    401: { description: 'Invalid token' },
+    500: { description: 'Callback failed' }
+  }
+})
+
+authRoutes.openapi(oauthCallbackRoute, async (c) => {
+  try {
+    // 1. Obtener el access_token
+    const host = c.req.header('host') || 'localhost'
+    const url = new URL(c.req.url, `http://${host}`)
+    let access_token = url.searchParams.get('access_token') || null
+
+    if (!access_token) {
+      try {
+        const ct = c.req.header('content-type') || ''
+        if (ct.includes('application/json')) {
+          const body = await c.req.json()
+          access_token = body?.access_token
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    if (!access_token) return c.json({ success: false, error: 'no token' }, 400)
+
+    // 2. Obtener usuario desde Supabase
+    const { data, error } = await supabase.auth.getUser(access_token)
+    if (error || !data.user) return c.json({ success: false, error: 'invalid token' }, 401)
+
+    const user = data.user
+    const email = user.email ?? user.user_metadata?.email ?? null
+
+    if (!email) {
+      return c.json({ success: false, error: 'No se pudo obtener el email del usuario' }, 400)
+    }
+
+    // 3. Calcular TTL
+    let ttl = 3600
+    try {
+      const decoded = jwt.decode(access_token) as { exp?: number } | null
+      if (decoded?.exp) {
+        const now = Math.floor(Date.now() / 1000)
+        ttl = Math.max(60, Math.min(decoded.exp - now - 30, 6 * 60 * 60))
+      }
+    } catch (err) { }
+
+    const setCookie = `sb_access_token=${access_token}; HttpOnly; Path=/; Max-Age=${ttl}`
+
+    // 4. Devolver user + cookie
+    return c.json(
+      {
+        success: true,
+        data: {
+          id: user.id,
+          email,
+          full_name: user.user_metadata?.full_name ?? '',
+          role: 'cliente'
+        }
+      },
+      { status: 200, headers: { 'Set-Cookie': setCookie } }
+    )
+  } catch (err) {
+    return c.json(
+      { success: false, error: err instanceof Error ? err.message : 'callback failed' },
+      500
+    )
+  }
+})
+
+// Serve a small HTML page to extract the fragment (#access_token=...) and POST it to the server
+authRoutes.get('/auth/callback', (c) => {
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Auth callback</title>
+  </head>
+  <body>
+    <p>Processing login...</p>
+    <script>
+      (async function(){
+        try {
+          const hash = window.location.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          const access_token = params.get('access_token');
+          if (!access_token) {
+            document.body.textContent = 'No access token found in URL fragment.';
+            return;
+          }
+          const res = await fetch('/auth/oauth/callback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ access_token })
+          });
+          if (res.ok) {
+            window.location.href = '${POST_LOGOUT_REDIRECT_URL}';
+          } else {
+            const body = await res.text();
+            document.body.textContent = 'Auth callback failed: ' + body;
+          }
+        } catch (err) {
+          document.body.textContent = 'Error: ' + (err && err.message ? err.message : err);
+        }
+      })();
+    </script>
+  </body>
+</html>`
+  return c.html(html)
 })
 
 // 🚀 Logout

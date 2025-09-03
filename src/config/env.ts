@@ -21,6 +21,9 @@ export const envSchema = z.object({
 
   // Auth
   JWT_SECRET: z.string().min(32),
+  // App URLs
+  APP_REDIRECT_URL: z.string().url().optional(),
+  POST_LOGOUT_REDIRECT_URL: z.string().url().optional(),
 
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
@@ -42,4 +45,6 @@ export const {
   REDIS_PASSWORD,
   JWT_SECRET,
   LOG_LEVEL,
+  APP_REDIRECT_URL,
+  POST_LOGOUT_REDIRECT_URL,
 } = env

@@ -96,7 +96,29 @@ app.use('*', async (c, next) => {
 // Root
 app.get('/', (c) => {
   logger.info('hit /');
-  return c.text('Hello Hono!');
+  const html = `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mercador</title>
+    <style>
+      body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; background:#f7fafc }
+      .card { background:#fff; padding:24px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.06); text-align:center }
+      button { background:#2563eb; color:#fff; border:none; padding:12px 20px; border-radius:6px; font-size:16px; cursor:pointer }
+      button:hover { background:#1e40af }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Mercador</h1>
+      <p>Bienvenido — inicia sesión para continuar</p>
+      <a href="/auth/login/google"><button type="button">Iniciar sesión</button></a>
+    </div>
+  </body>
+</html>`;
+
+  return c.html(html);
 });
 
 // Apply middleware
