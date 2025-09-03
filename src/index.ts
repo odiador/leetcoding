@@ -1,11 +1,12 @@
 import { serve } from '@hono/node-server';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { pino } from 'pino';
-import { LOG_LEVEL } from './config/env';
+import { LOG_LEVEL, PORT, API_URL } from './config/env.js';
 import { createClient } from 'redis';
-import { initRedis } from './config/redis';
-import { authMiddleware, optionalAuthMiddleware } from './middlewares';
-import { authRoutes, cartRoutes, healthRoutes, orderRoutes, productRoutes } from './routes';
+import { initRedis } from './config/redis.js';
+import { authMiddleware, optionalAuthMiddleware } from './middlewares/index.js';
+import { authRoutes, cartRoutes, healthRoutes, orderRoutes, productRoutes } from './routes/index.js';
+
 
 // Importar métricas centralizadas
 import {
@@ -14,7 +15,7 @@ import {
   httpRequestsTotal,
   redisLatency,
   redisReconnections,
-} from './config/metrics';
+} from './config/metrics.js';
 
 const app = new OpenAPIHono();
 
@@ -26,7 +27,7 @@ app.doc('/doc', {
     version: '1.0.0',
     description: 'Backend API for Mercador e-commerce platform',
   },
-  servers: [{ url: 'http://localhost:3010' }],
+  servers: [{ url: API_URL || `http://localhost:${PORT}` }],
 });
 
 app.get('/openapi', (c) => {
@@ -173,7 +174,7 @@ app.onError((err, c) => {
 serve(
   {
     fetch: app.fetch,
-    port: 3010,
+    port: PORT,
   },
   (info) => {
     logger.info(`Server is running on http://localhost:${info.port}`);

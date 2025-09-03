@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import * as cartService from '../services/cart.service'
+import * as cartService from '../services/cart.service.js'
 
 const cartRoutes = new OpenAPIHono()
 

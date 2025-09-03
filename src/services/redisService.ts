@@ -1,5 +1,5 @@
 import { createClient } from 'redis'
-import { initRedis } from '../config/redis'
+import { initRedis } from '../config/redis.js'
 import { pino } from 'pino'
 
 export class RedisService {

@@ -1,8 +1,8 @@
 import type { Context, Next } from 'hono'
-import { supabase } from '../config/supabase'
-import { initRedis } from '../config/redis'
+import { supabase } from '../config/supabase.js'
+import { initRedis } from '../config/redis.js'
 import { pino } from 'pino'
-import { LOG_LEVEL } from '../config/env'
+import { LOG_LEVEL } from '../config/env.js'
 import jwt from 'jsonwebtoken'
 
 const logger = pino({ level: LOG_LEVEL })

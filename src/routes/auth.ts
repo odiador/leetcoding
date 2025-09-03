@@ -1,8 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import jwt from 'jsonwebtoken'
-import { POST_LOGOUT_REDIRECT_URL } from '../config/env'
-import { supabase } from '../config/supabase'
-import * as userService from '../services/user.service'
+import { POST_LOGOUT_REDIRECT_URL } from '../config/env.js'
+import { supabase } from '../config/supabase.js'
+import * as userService from '../services/user.service.js'
 import type { User } from '@supabase/supabase-js'
 
 const authRoutes = new OpenAPIHono()

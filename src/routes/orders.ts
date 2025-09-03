@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import * as orderService from '../services/order.service'
+import * as orderService from '../services/order.service.js'
 
 const orderRoutes = new OpenAPIHono()
 

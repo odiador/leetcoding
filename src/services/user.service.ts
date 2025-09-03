@@ -1,6 +1,5 @@
-import { supabase } from '../config/supabase'
-import { APP_REDIRECT_URL } from '../config/env'
-import type { User } from '@supabase/supabase-js'
+import { APP_REDIRECT_URL } from '../config/env.js'
+import { supabase } from '../config/supabase.js'
 
 /**
  * Tipo de perfil de usuario

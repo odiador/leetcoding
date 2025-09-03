@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from 'hono'
 import jwt from 'jsonwebtoken'
-import { JWT_SECRET } from '../config/env'
-import { AuthenticationError } from '../utils/errors'
+import { JWT_SECRET } from '../config/env.js'
+import { AuthenticationError } from '../utils/errors.js'
 
 interface JWTPayload {
   userId: string

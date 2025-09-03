@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from 'hono'
-import { formatError } from '../utils/errors'
-import { logger } from '../utils/logger'
+import { formatError } from '../utils/errors.js'
+import { logger } from '../utils/logger.js'
 
 export const errorHandler: MiddlewareHandler = async (c, next) => {
   try {

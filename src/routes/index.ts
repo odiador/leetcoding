@@ -1,8 +1,8 @@
-import healthRoutes from './health'
-import authRoutes from './auth'
-import productRoutes from './products'
-import cartRoutes from './cart'
-import orderRoutes from './orders'
+import healthRoutes from './health.js'
+import authRoutes from './auth.js'
+import productRoutes from './products.js'
+import cartRoutes from './cart.js'
+import orderRoutes from './orders.js'
 
 // Export all route modules
 export {

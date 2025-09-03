@@ -1,4 +1,4 @@
-export { requestLogger } from './requestLogger'
-export { metricsMiddleware } from './metrics'
-export { authMiddleware, optionalAuthMiddleware } from './authMiddleware'
-export { errorHandler, devErrorHandler } from './errorHandler'
+export { requestLogger } from './requestLogger.js'
+export { metricsMiddleware } from './metrics.js'
+export { authMiddleware, optionalAuthMiddleware } from './authMiddleware.js'
+export { errorHandler, devErrorHandler } from './errorHandler.js'

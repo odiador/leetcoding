@@ -1,6 +1,6 @@
 import { pino } from 'pino'
 import { createClient } from 'redis'
-import { REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD } from './env'
+import { REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD } from './env.js'
 
 let redisClient: ReturnType<typeof createClient> | null = null
 // Redis setup - use validated REDIS_URL if provided, otherwise explicit host/port/password
