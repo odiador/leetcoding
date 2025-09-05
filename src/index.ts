@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server';
-import { OpenAPIHono } from '@hono/zod-openapi';
+import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi';
 import { pino } from 'pino';
 import { LOG_LEVEL, PORT, API_URL } from './config/env.js';
 import { createClient } from 'redis';
@@ -191,3 +191,109 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     process.exit(0);
   });
 }
+
+
+
+// 🚀 Ruta temporal para probar el callback de Google
+const homeCallbackRoute = createRoute({
+  method: 'get',
+  path: '/home',
+  responses: {
+    200: {
+      description: 'Página temporal para manejar el callback de Google OAuth y probar el flujo.',
+      content: {
+        'text/html': {
+          schema: z.string(),
+        },
+      },
+    },
+  },
+});
+
+app.openapi(homeCallbackRoute, async (c) => {
+  const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google OAuth Callback</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen font-sans">
+  <div class="bg-white p-8 rounded-lg shadow-lg max-w-md w-full text-center">
+    <h1 class="text-2xl font-bold mb-4 text-gray-800">Procesando autenticación con Google...</h1>
+    <p id="message" class="text-gray-600 mb-4 animate-pulse">Redirigiendo a tu cuenta...</p>
+    <div id="result" class="bg-gray-100 p-4 rounded-md text-left text-sm text-gray-700 font-mono overflow-auto max-h-64 mt-4 hidden"></div>
+  </div>
+
+  <script>
+    const resultDiv = document.getElementById('result');
+    const messageDiv = document.getElementById('message');
+
+    async function processAuthCallback() {
+      try {
+        // 1. Obtener el token del fragmento de la URL
+        const hash = window.location.hash;
+        if (!hash) {
+          messageDiv.textContent = 'No se encontró el token de acceso.';
+          resultDiv.textContent = 'URL sin fragmento. ¿Estás seguro de que la URL de redirección en Supabase está configurada para esta ruta?';
+          resultDiv.classList.remove('hidden');
+          return;
+        }
+
+        const params = new URLSearchParams(hash.substring(1));
+        const accessToken = params.get('access_token');
+        
+        if (!accessToken) {
+          messageDiv.textContent = 'No se encontró el token de acceso en la URL.';
+          resultDiv.textContent = 'El fragmento de la URL no contiene "access_token". Asegúrate de que el flujo de Supabase sea correcto.';
+          resultDiv.classList.remove('hidden');
+          return;
+        }
+
+        messageDiv.textContent = 'Token encontrado. Enviando al servidor para validación...';
+        resultDiv.textContent = 'Token de acceso: ' + accessToken.substring(0, 10) + '...';
+        resultDiv.classList.remove('hidden');
+
+        // 2. Enviar el token al endpoint del backend
+        const response = await fetch('/auth/oauth/callback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ access_token: accessToken })
+        });
+        
+        const data = await response.json();
+        
+        // 3. Mostrar el resultado de la petición
+        resultDiv.textContent += '\\n\\nRespuesta del servidor: ' + JSON.stringify(data, null, 2);
+        
+        if (response.ok) {
+          if (data.message) {
+              messageDiv.textContent = data.message;
+          } else {
+              messageDiv.textContent = '¡Inicio de sesión exitoso! Redirigiendo...';
+          }
+          // Puedes añadir una redirección aquí al dashboard si lo necesitas, por ejemplo:
+          // setTimeout(() => window.location.href = '/dashboard', 2000);
+        } else {
+          messageDiv.textContent = 'Hubo un error al procesar el token.';
+        }
+      } catch (error) {
+        messageDiv.textContent = 'Error de conexión. Por favor, inténtalo de nuevo.';
+        resultDiv.textContent = 'Error de red: ' + error.message;
+        resultDiv.classList.remove('hidden');
+      }
+    }
+
+    // Iniciar el proceso al cargar la página
+    window.onload = processAuthCallback;
+  </script>
+</body>
+</html>
+  `;
+
+  return c.html(htmlContent);
+});

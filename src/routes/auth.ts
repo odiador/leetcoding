@@ -1,27 +1,27 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import jwt from 'jsonwebtoken'
-import { POST_LOGOUT_REDIRECT_URL } from '../config/env.js'
-import { supabase } from '../config/supabase.js'
+// Renombrado para mayor claridad, asumiendo que user.service.js exporta las funciones de auth.ts
 import * as userService from '../services/user.service.js'
-import type { User } from '@supabase/supabase-js'
 
 const authRoutes = new OpenAPIHono()
 
-// Schemas
+// --- Zod Schemas ---
+
 const SignupSchema = z.object({
-  email: z.email(),
-  password: z.string().min(6),
-  name: z.string().min(2)
+  email: z.string().email(),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+  full_name: z.string().min(2),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  country: z.string().optional(),
 })
 
-const SignupResponse = z.object({
-  success: z.boolean(),
-  data: z.object({
-    id: z.string().uuid(),
-    email: z.email(),
-    full_name: z.string(),
-    role: z.string()
-  })
+const UserResponseSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  full_name: z.string(),
+  role: z.string(),
 })
 
 const LoginSchema = z.object({
@@ -29,379 +29,312 @@ const LoginSchema = z.object({
   password: z.string().min(6)
 })
 
-const LoginResponse = z.object({
-  success: z.boolean(),
-  data: z.object({
-    id: z.string().uuid(),
-    email: z.string().email(),
-    full_name: z.string(),
-    role: z.string()
-  })
-})
+const MagicLinkLoginSchema = z.object({
+  email: z.string().email('Por favor, introduce un correo válido.'),
+});
 
-const LoginGoogleResponse = z.object({
-  success: z.boolean(),
-  url: z.string().url()
-})
+const RequestPasswordResetSchema = z.object({
+  email: z.string().email('Por favor, introduce un correo válido.'),
+});
 
-const LogoutResponse = z.object({
-  success: z.boolean(),
-  message: z.string()
-})
+const UpdatePasswordSchema = z.object({
+  newPassword: z.string().min(6, 'La nueva contraseña debe tener al menos 6 caracteres.'),
+});
 
-const MeResponse = z.object({
-  success: z.boolean(),
-  data: z.object({
-    id: z.uuid(),
-    full_name: z.string(),
-    role: z.string(),
-    email: z.email()
-  })
-})
+// --- Helper para Cookies ---
 
-// 🚀 Signup
+const createSessionCookie = (accessToken: string): string => {
+  let ttl = 3600; // 1 hora por defecto
+  try {
+    const decoded = jwt.decode(accessToken) as { exp?: number } | null;
+    if (decoded?.exp) {
+      const now = Math.floor(Date.now() / 1000);
+      // Establece TTL para que expire 30s antes que el token real, max 6 horas
+      ttl = Math.max(60, Math.min(decoded.exp - now - 30, 6 * 60 * 60));
+    }
+  } catch (err) {
+    console.error("Failed to decode JWT:", err);
+  }
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  const cookieOptions = [
+    `HttpOnly`,
+    `Path=/`,
+    `Max-Age=${ttl}`,
+    isProduction ? 'Secure' : '',
+    isProduction ? 'SameSite=Lax' : ''
+  ].filter(Boolean).join('; ');
+
+  return `sb_access_token=${accessToken}; ${cookieOptions}`;
+};
+
+const clearSessionCookie = (): string => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const cookieOptions = [
+    `HttpOnly`,
+    `Path=/`,
+    `Max-Age=0`, // Expira la cookie inmediatamente
+    isProduction ? 'Secure' : '',
+    isProduction ? 'SameSite=Lax' : ''
+  ].filter(Boolean).join('; ');
+  return `sb_access_token=; ${cookieOptions}`;
+}
+
+
+// --- Rutas de Autenticación ---
+
+// 🚀 1. Signup
 const signupRoute = createRoute({
   method: 'post',
   path: '/signup',
-  request: {
-    body: {
-      content: {
-        'application/json': {
-          schema: SignupSchema
-        }
-      },
-      required: true
-    }
-  },
+  request: { body: { content: { 'application/json': { schema: SignupSchema } }, required: true } },
   responses: {
-    200: {
-      description: 'User created successfully',
-      content: {
-        'application/json': {
-          schema: SignupResponse
-        }
-      }
-    },
-    400: {
-      description: 'Signup failed'
-    }
+    201: { description: 'Usuario creado', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
+    400: { description: 'Error en la petición' },
+    409: { description: 'El correo ya está en uso' }
   }
 })
 
 authRoutes.openapi(signupRoute, async (c) => {
   try {
-    const body = c.req.valid('json')
-    const { user } = await userService.signupWithEmail(body.email, body.password, body.name)
+    const body = c.req.valid('json');
+    const { data, error } = await userService.signupWithEmail(body.email, body.password, body);
 
-    return c.json(
-      {
-        success: true,
-        data: {
-          id: user.id,
-          email: user.email!,
-          full_name: user.user_metadata?.full_name ?? '',
-          role: 'cliente'
-        }
-      },
-      200
-    )
+    // Manejo robusto de error: Supabase devuelve un objeto error, no siempre una instancia de Error
+    if (error) {
+      const msg = (error as any)?.message ?? JSON.stringify(error);
+      if (typeof msg === 'string' && msg.includes('already registered')) {
+        return c.json({ success: false, error: 'Este correo ya está en uso' }, 409);
+      }
+      return c.json({ success: false, error: msg }, 400);
+    }
+
+    if (!data || !data.user) {
+      return c.json({ success: false, error: 'No se pudo crear el usuario' }, 400);
+    }
+
+    const user = data.user;
+    return c.json({
+      success: true,
+      data: {
+        id: user.id,
+        email: user.email!,
+        full_name: user.user_metadata.full_name,
+        role: user.user_metadata.role
+      }
+    }, 201);
   } catch (err) {
-    return c.json({ success: false, error: (err as Error).message }, 400)
+    return c.json({ success: false, error: (err as Error).message }, 400);
   }
-})
+});
 
-// 🚀 Login (email/password)
+
+// 🚀 2. Login (Email/Password)
 const loginRoute = createRoute({
   method: 'post',
   path: '/login',
-  request: {
-    body: {
-      content: {
-        'application/json': {
-          schema: LoginSchema
-        }
-      },
-      required: true
-    }
-  },
+  request: { body: { content: { 'application/json': { schema: LoginSchema } }, required: true } },
   responses: {
-    200: {
-      description: 'User logged in successfully',
-      content: {
-        'application/json': {
-          schema: LoginResponse
-        }
-      }
-    },
-    401: {
-      description: 'Invalid credentials'
-    }
+    200: { description: 'Login exitoso', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
+    401: { description: 'Credenciales inválidas' }
   }
 })
 
 authRoutes.openapi(loginRoute, async (c) => {
   try {
-    const body = c.req.valid('json')
-    const { user } = await userService.loginWithEmail(body.email, body.password)
+    const body = c.req.valid('json');
+    const { user, session } = await userService.loginWithEmail(body.email, body.password);
 
-    return c.json(
-      {
-        success: true,
-        data: {
-          id: user.id,
-          email: user.email!,
-          full_name: user.user_metadata?.full_name ?? '',
-          role: 'cliente'
-        }
-      },
-      200
-    )
+    if (!session) throw new Error('No se pudo iniciar sesión');
+
+    const sessionCookie = createSessionCookie(session.access_token);
+
+    return c.json({
+      success: true,
+      data: {
+        id: user.id,
+        email: user.email!,
+        full_name: user.user_metadata.full_name,
+        role: user.user_metadata.role
+      }
+    }, 200, { 'Set-Cookie': sessionCookie });
   } catch (err) {
-    return c.json({ success: false, error: (err as Error).message }, 401)
+    return c.json({ success: false, error: 'Email o contraseña incorrectos' }, 401);
   }
-})
+});
 
-// 🚀 Login con Google
+// 🚀 3. Login con Magic Link
+const magicLinkRoute = createRoute({
+  method: 'post',
+  path: '/login/magiclink',
+  request: { body: { content: { 'application/json': { schema: MagicLinkLoginSchema } }, required: true } },
+  responses: {
+    200: { description: 'Enlace de inicio de sesión enviado', content: { 'application/json': { schema: z.object({ success: z.boolean(), message: z.string() }) } } },
+    400: { description: 'Error en la petición' },
+  },
+});
+
+authRoutes.openapi(magicLinkRoute, async (c) => {
+  try {
+    const { email } = c.req.valid('json');
+    await userService.loginWithMagicLink(email);
+    return c.json({ success: true, message: 'Revisa tu correo para el enlace de inicio de sesión.' }, 200);
+  } catch (err) {
+    return c.json({ success: false, error: (err as Error).message }, 400);
+  }
+});
+
+
+// 🚀 4. Login con Google (inicia el flujo)
 const loginGoogleRoute = createRoute({
   method: 'get',
   path: '/login/google',
   responses: {
-    200: {
-      description: 'Google login URL',
-      content: {
-        'application/json': {
-          schema: LoginGoogleResponse
-        }
-      }
-    },
-    401: {
-      description: 'Login failed'
-    }
+    200: { description: 'URL de redirección de Google', content: { 'application/json': { schema: z.object({ success: z.boolean(), url: z.string().url() }) } } },
+    500: { description: 'Error al iniciar sesión con Google' }
   }
 })
 
 authRoutes.openapi(loginGoogleRoute, async (c) => {
   try {
-    const { url } = await userService.loginWithGoogle()
-    // If called from a browser, redirect directly to the OAuth URL for manual testing
-    const accept = c.req.header('accept') || ''
-    if (accept.includes('text/html')) {
-      return c.redirect(url)
+    const { url } = await userService.loginWithGoogle();
+    // Si el cliente es un navegador, redirigir directamente
+    if (c.req.header('accept')?.includes('text/html')) {
+      return c.redirect(url);
     }
-
-    return c.json({ success: true, url })
+    return c.json({ success: true, url });
   } catch (error) {
-    return c.json(
-      { success: false, error: error instanceof Error ? error.message : 'Login failed' },
-      401
-    )
+    return c.json({ success: false, error: 'No se pudo obtener la URL de Google' }, 500);
   }
-})
+});
 
-// OAuth callback used by client-side redirect page: receives access_token from the browser
-const oauthCallbackSchema = z.object({ access_token: z.string().min(1) })
-
+// 🚀 5. OAuth Callback (Google redirige aquí)
 const oauthCallbackRoute = createRoute({
   method: 'post',
   path: '/oauth/callback',
-  request: {
-    body: {
-      content: {
-        'application/json': {
-          schema: oauthCallbackSchema
-        }
-      },
-      required: true
-    }
-  },
+  request: { body: { content: { 'application/json': { schema: z.object({ access_token: z.string() }) } } } },
   responses: {
-    200: {
-      description: 'OAuth callback accepted',
-      content: {
-        'application/json': {
-          schema: MeResponse
-        }
-      }
-    },
-    400: { description: 'Missing token' },
-    401: { description: 'Invalid token' },
-    500: { description: 'Callback failed' }
+    200: { description: 'Callback exitoso', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
+    400: { description: 'Token no proporcionado' },
+    401: { description: 'Token inválido' }
   }
-})
+});
 
 authRoutes.openapi(oauthCallbackRoute, async (c) => {
   try {
-    // 1. Obtener el access_token
-    const host = c.req.header('host') || 'localhost'
-    const url = new URL(c.req.url, `http://${host}`)
-    let access_token = url.searchParams.get('access_token') || null
+    const { access_token } = c.req.valid('json');
+    const { data, error } = await userService.getUserByAccessToken(access_token);
 
-    if (!access_token) {
-      try {
-        const ct = c.req.header('content-type') || ''
-        if (ct.includes('application/json')) {
-          const body = await c.req.json()
-          access_token = body?.access_token
-        }
-      } catch (err) {
-        // ignore
-      }
+    if (error || !data.user) {
+      return c.json({ success: false, error: 'Token de acceso inválido' }, 401);
     }
 
-    if (!access_token) return c.json({ success: false, error: 'no token' }, 400)
+    const sessionCookie = createSessionCookie(access_token);
+    const user = data.user;
 
-    // 2. Obtener usuario desde Supabase
-    const { data, error } = await supabase.auth.getUser(access_token)
-    if (error || !data.user) return c.json({ success: false, error: 'invalid token' }, 401)
-
-    const user = data.user
-    const email = user.email ?? user.user_metadata?.email ?? null
-
-    if (!email) {
-      return c.json({ success: false, error: 'No se pudo obtener el email del usuario' }, 400)
-    }
-
-    // 3. Calcular TTL
-    let ttl = 3600
-    try {
-      const decoded = jwt.decode(access_token) as { exp?: number } | null
-      if (decoded?.exp) {
-        const now = Math.floor(Date.now() / 1000)
-        ttl = Math.max(60, Math.min(decoded.exp - now - 30, 6 * 60 * 60))
+    return c.json({
+      success: true,
+      data: {
+        id: user.id,
+        email: user.email!,
+        full_name: user.user_metadata.full_name,
+        role: user.user_metadata.role
       }
-    } catch (err) { }
+    }, 200, { 'Set-Cookie': sessionCookie });
 
-    const setCookie = `sb_access_token=${access_token}; HttpOnly; Path=/; Max-Age=${ttl}`
-
-    // 4. Devolver user + cookie
-    return c.json(
-      {
-        success: true,
-        data: {
-          id: user.id,
-          email,
-          full_name: user.user_metadata?.full_name ?? '',
-          role: 'cliente'
-        }
-      },
-      { status: 200, headers: { 'Set-Cookie': setCookie } }
-    )
   } catch (err) {
-    return c.json(
-      { success: false, error: err instanceof Error ? err.message : 'callback failed' },
-      500
-    )
+    return c.json({ success: false, error: 'Fallo en el callback de OAuth' }, 500);
   }
-})
+});
 
-// Serve a small HTML page to extract the fragment (#access_token=...) and POST it to the server
-authRoutes.get('/auth/callback', (c) => {
-  const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Auth callback</title>
-  </head>
-  <body>
-    <p>Processing login...</p>
-    <script>
-      (async function(){
-        try {
-          const hash = window.location.hash.substring(1);
-          const params = new URLSearchParams(hash);
-          const access_token = params.get('access_token');
-          if (!access_token) {
-            document.body.textContent = 'No access token found in URL fragment.';
-            return;
-          }
-          const res = await fetch('/auth/oauth/callback', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ access_token })
-          });
-          if (res.ok) {
-            window.location.href = '${POST_LOGOUT_REDIRECT_URL}';
-          } else {
-            const body = await res.text();
-            document.body.textContent = 'Auth callback failed: ' + body;
-          }
-        } catch (err) {
-          document.body.textContent = 'Error: ' + (err && err.message ? err.message : err);
-        }
-      })();
-    </script>
-  </body>
-</html>`
-  return c.html(html)
-})
-
-// 🚀 Logout
+// 🚀 6. Logout
 const logoutRoute = createRoute({
   method: 'post',
   path: '/logout',
   responses: {
-    200: {
-      description: 'Logged out successfully',
-      content: {
-        'application/json': {
-          schema: LogoutResponse
-        }
-      }
-    },
-    500: {
-      description: 'Logout failed'
-    }
+    200: { description: 'Logout exitoso', content: { 'application/json': { schema: z.object({ success: z.boolean(), message: z.string() }) } } },
   }
 })
 
 authRoutes.openapi(logoutRoute, async (c) => {
-  try {
-    // En Supabase logout normalmente se hace desde el cliente
-    return c.json({ success: true, message: 'Logged out successfully' })
-  } catch (error) {
-    return c.json({ success: false, error: 'Logout failed' }, 500)
-  }
-})
+  // La invalidación del token la maneja Supabase en el cliente.
+  // Aquí, lo importante es eliminar la cookie HttpOnly del navegador.
+  const cookie = clearSessionCookie();
+  return c.json({ success: true, message: 'Sesión cerrada exitosamente' }, 200, {
+    'Set-Cookie': cookie
+  });
+});
 
-// 🚀 Me (perfil actual)
+// 🚀 7. Pedir reseteo de contraseña
+const requestPasswordResetRoute = createRoute({
+  method: 'post',
+  path: '/password/reset',
+  request: { body: { content: { 'application/json': { schema: RequestPasswordResetSchema } }, required: true } },
+  responses: {
+    200: { description: 'Correo de reseteo enviado', content: { 'application/json': { schema: z.object({ success: z.boolean(), message: z.string() }) } } },
+    400: { description: 'Error en la petición' },
+  },
+});
+
+authRoutes.openapi(requestPasswordResetRoute, async (c) => {
+  try {
+    const { email } = c.req.valid('json');
+    await userService.requestPasswordReset(email);
+    return c.json({ success: true, message: 'Si el correo existe, recibirás un enlace para resetear tu contraseña.' }, 200);
+  } catch (err) {
+    return c.json({ success: false, error: (err as Error).message }, 400);
+  }
+});
+
+// 🚀 8. Actualizar contraseña (requiere autenticación)
+const updatePasswordRoute = createRoute({
+  method: 'post',
+  path: '/password/update',
+  security: [{ Bearer: [] }], // Indica que es una ruta protegida
+  request: { body: { content: { 'application/json': { schema: UpdatePasswordSchema } }, required: true } },
+  responses: {
+    200: { description: 'Contraseña actualizada', content: { 'application/json': { schema: z.object({ success: z.boolean(), message: z.string() }) } } },
+    401: { description: 'No autenticado' },
+    400: { description: 'Error en la petición' },
+  },
+});
+
+authRoutes.openapi(updatePasswordRoute, async (c) => {
+  try {
+    // Asume que un middleware ya verificó la sesión y el usuario está autenticado
+    const { newPassword } = c.req.valid('json');
+    await userService.updatePassword(newPassword);
+    return c.json({ success: true, message: 'Tu contraseña ha sido actualizada.' }, 200);
+  } catch (err) {
+    return c.json({ success: false, error: (err as Error).message }, 400);
+  }
+});
+
+
+// 🚀 9. Obtener perfil del usuario actual (ruta protegida)
 const meRoute = createRoute({
   method: 'get',
   path: '/me',
+  security: [{ Bearer: [] }],
   responses: {
-    200: {
-      description: 'Current user info',
-      content: {
-        'application/json': {
-          schema: MeResponse
-        }
-      }
-    },
-    401: {
-      description: 'Not authenticated'
-    },
-    500: {
-      description: 'Failed to get user'
-    }
+    200: { description: 'Perfil del usuario', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
+    401: { description: 'No autenticado' },
   }
 })
 
 authRoutes.openapi(meRoute, async (c) => {
   try {
-    const userId = c.get('userId')
+    // Se asume que un middleware previo ha validado el token y ha puesto el 'userId' en el contexto
+    const userId = c.get('userId');
     if (!userId) {
-      return c.json({ success: false, error: 'Not authenticated' }, 401)
+      return c.json({ success: false, error: 'No autenticado' }, 401);
     }
-
-    const user = await userService.getUserById(userId)
-
-    return c.json({ success: true, data: user })
-  } catch (error) {
-    return c.json(
-      { success: false, error: error instanceof Error ? error.message : 'Failed to get user' },
-      500
-    )
+    const userProfile = await userService.getUserById(userId);
+    return c.json({ success: true, data: userProfile });
+  } catch (err) {
+    return c.json({ success: false, error: 'No se pudo obtener el perfil del usuario' }, 500);
   }
-})
+});
 
-export default authRoutes
+
+export default authRoutes;
