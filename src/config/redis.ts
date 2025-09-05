@@ -1,6 +1,7 @@
 import { pino } from 'pino'
 import { createClient } from 'redis'
 import { REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD } from './env.js'
+import { RedisService } from '../services/redis.service.js'
 
 let redisClient: ReturnType<typeof createClient> | null = null
 // Redis setup - use validated REDIS_URL if provided, otherwise explicit host/port/password
@@ -39,3 +40,5 @@ export async function initRedis(logger: pino.Logger): Promise<ReturnType<typeof 
         throw err
     }
 }
+
+export const redisService = new RedisService();
