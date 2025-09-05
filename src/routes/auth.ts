@@ -9,34 +9,59 @@ const authRoutes = new OpenAPIHono()
 // --- Zod Schemas ---
 
 const SignupSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
-  full_name: z.string().min(2),
+  email: z.email(),
+  password: z.string()
+    .min(8, 'La contraseña debe tener al menos 8 caracteres')
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/, 
+      'La contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
+  full_name: z.string().min(2, 'El nombre completo es requerido'),
   country: z.string().optional(),
 })
 
 const UserResponseSchema = z.object({
-  id: z.string().uuid(),
-  email: z.string().email(),
+  id: z.uuid(),
+  email: z.email(),
   full_name: z.string(),
   role: z.string(),
 })
 
+const LoginResponseSchema = z.object({
+  success: z.boolean(),
+  session: z.object({
+    access_token: z.string(),
+    refresh_token: z.string(),
+    expires_in: z.number(),
+    expires_at: z.number().optional(),
+    token_type: z.string(),
+    user: z.object({
+      id: z.uuid(),
+      email: z.email(),
+      user_metadata: z.record(z.string(), z.any()),
+    }).loose()
+  }).loose()
+})
+
 const LoginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6)
+  email: z.email(),
+  password: z.string()
+    .min(8, 'La contraseña debe tener al menos 8 caracteres')
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/, 
+      'La contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
 })
 
 const MagicLinkLoginSchema = z.object({
-  email: z.string().email('Por favor, introduce un correo válido.'),
+  email: z.email('Por favor, introduce un correo válido.'),
 });
 
 const RequestPasswordResetSchema = z.object({
-  email: z.string().email('Por favor, introduce un correo válido.'),
+  email: z.email('Por favor, introduce un correo válido.'),
 });
 
 const UpdatePasswordSchema = z.object({
-  newPassword: z.string().min(6, 'La nueva contraseña debe tener al menos 6 caracteres.'),
+  newPassword: z.string()
+    .min(8, 'La nueva contraseña debe tener al menos 8 caracteres')
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/, 
+      'La nueva contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
 });
 
 // --- Helper para Cookies ---
@@ -111,15 +136,9 @@ authRoutes.openapi(signupRoute, async (c) => {
       return c.json({ success: false, error: 'No se pudo crear el usuario' }, 400);
     }
 
-    const user = data.user;
     return c.json({
       success: true,
-      data: {
-        id: user.id,
-        email: user.email!,
-        full_name: user.user_metadata.full_name,
-        role: user.user_metadata.role
-      }
+      data: data
     }, 201);
   } catch (err) {
     return c.json({ success: false, error: (err as Error).message }, 400);
@@ -133,7 +152,7 @@ const loginRoute = createRoute({
   path: '/login',
   request: { body: { content: { 'application/json': { schema: LoginSchema } }, required: true } },
   responses: {
-    200: { description: 'Login exitoso', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
+    200: { description: 'Login exitoso', content: { 'application/json': { schema: LoginResponseSchema } } },
     401: { description: 'Credenciales inválidas' }
   }
 })
@@ -141,7 +160,7 @@ const loginRoute = createRoute({
 authRoutes.openapi(loginRoute, async (c) => {
   try {
     const body = c.req.valid('json');
-    const { user, session } = await userService.loginWithEmail(body.email, body.password);
+    const { session } = await userService.loginWithEmail(body.email, body.password);
 
     if (!session) throw new Error('No se pudo iniciar sesión');
 
@@ -149,12 +168,7 @@ authRoutes.openapi(loginRoute, async (c) => {
 
     return c.json({
       success: true,
-      data: {
-        id: user.id,
-        email: user.email!,
-        full_name: user.user_metadata.full_name,
-        role: user.user_metadata.role
-      }
+      session: session
     }, 200, { 'Set-Cookie': sessionCookie });
   } catch (err) {
     return c.json({ success: false, error: 'Email o contraseña incorrectos' }, 401);
