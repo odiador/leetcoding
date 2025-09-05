@@ -1,4 +1,3 @@
-export { RedisService } from './redisService.js'
 export * as userService from './user.service.js'
 export * as productService from './product.service.js'
 export * as cartService from './cart.service.js'
