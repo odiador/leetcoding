@@ -12,9 +12,6 @@ const SignupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
   full_name: z.string().min(2),
-  phone: z.string().optional(),
-  address: z.string().optional(),
-  city: z.string().optional(),
   country: z.string().optional(),
 })
 

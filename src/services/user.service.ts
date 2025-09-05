@@ -12,9 +12,6 @@ export interface UserProfile {
   full_name: string
   email: string
   role: string
-  phone?: string
-  address?: string
-  city?: string
   country?: string
   created_at?: string
   updated_at?: string
@@ -30,9 +27,6 @@ export async function signupWithEmail(
   password: string,
   metadata: {
     full_name: string
-    phone?: string
-    address?: string
-    city?: string
     country?: string
     role?: string
   }
@@ -43,9 +37,6 @@ export async function signupWithEmail(
     options: {
       data: {
         full_name: metadata.full_name,
-        phone: metadata.phone ?? null,
-        address: metadata.address ?? null,
-        city: metadata.city ?? null,
         country: metadata.country ?? null,
         role: metadata.role ?? 'cliente',
       },
