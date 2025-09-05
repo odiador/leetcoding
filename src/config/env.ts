@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import dotenv from 'dotenv'
-dotenv.config()
+
+const envValues = process.env;
+console.log({ envValues })
+if (process.env.NODE_ENV !== 'production')
+  dotenv.config()
 
 // Environment variables validation schema
 export const envSchema = z.object({
