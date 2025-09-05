@@ -105,6 +105,9 @@ productRoutes.openapi(listProductsRoute, async (c) => {
       data: result
     })
   } catch (error) {
+    // Log full error for debugging
+    // eslint-disable-next-line no-console
+    console.error('Error in GET /products:', error)
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch products'
@@ -156,6 +159,8 @@ productRoutes.openapi(getProductRoute, async (c) => {
       data: product
     })
   } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`Error in GET /products/:id (${c.req.param('id')}):`, error)
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch product'
@@ -202,6 +207,8 @@ productRoutes.openapi(createProductRoute, async (c) => {
       data: product
     }, 201)
   } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Error in POST /products:', error)
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create product'
@@ -252,6 +259,8 @@ productRoutes.openapi(updateProductRoute, async (c) => {
       data: product
     })
   } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`Error in PUT /products/${c.req.param('id')}:`, error)
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to update product'
@@ -293,6 +302,8 @@ productRoutes.openapi(deleteProductRoute, async (c) => {
       message: 'Product deleted successfully'
     })
   } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`Error in DELETE /products/${c.req.param('id')}:`, error)
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to delete product'

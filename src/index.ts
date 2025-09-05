@@ -19,6 +19,31 @@ import {
 
 const app = new OpenAPIHono();
 
+// CORS middleware: allow frontend during development (adjust origins in production)
+app.use('*', async (c, next) => {
+  const origin = c.req.header('Origin') || ''
+  const allowedOrigins = ['http://localhost:3000']
+
+  if (origin && allowedOrigins.includes(origin)) {
+    c.header('Access-Control-Allow-Origin', origin)
+    c.header('Vary', 'Origin')
+  } else {
+    // fallback: allow all (safe for local dev) — change this for production
+    c.header('Access-Control-Allow-Origin', '*')
+  }
+
+  c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+  c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+
+  // Handle preflight
+  if (c.req.method === 'OPTIONS') {
+    // use a cast to satisfy library typings for the status argument
+    return c.text('', 204 as any)
+  }
+
+  await next()
+})
+
 // OpenAPI documentation
 app.doc('/doc', {
   openapi: '3.0.0',
@@ -167,6 +192,10 @@ app.get('/metrics', async (c) => {
 // Error handler
 app.onError((err, c) => {
   logger.error({ err }, 'Unhandled error');
+  // In development return error details to help debugging. Do not enable in production.
+  if (process.env.NODE_ENV !== 'production') {
+    return c.json({ success: false, error: err?.message ?? 'Internal server error', stack: err?.stack }, 500)
+  }
   return c.json({ success: false, error: 'Internal server error' }, 500);
 });
 

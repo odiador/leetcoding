@@ -22,7 +22,7 @@ export const envSchema = z.object({
   // Auth
   JWT_SECRET: z.string().min(32),
   // App URLs
-  API_URL: z.url(),
+  API_URL: z.string().url().optional(),
   APP_REDIRECT_URL: z.string().url().optional(),
   POST_LOGOUT_REDIRECT_URL: z.string().url().optional(),
   CSRF_COOKIE: z.string().default('csrf_token'),
