@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import jwt from 'jsonwebtoken'
+import { issueCsrfCookie } from '../middlewares/csrf.js'
 // Renombrado para mayor claridad, asumiendo que user.service.js exporta las funciones de auth.ts
 import * as userService from '../services/user.service.js'
 
@@ -184,7 +185,7 @@ authRoutes.openapi(magicLinkRoute, async (c) => {
   }
 });
 
-
+/*
 // 🚀 4. Login con Google (inicia el flujo)
 const loginGoogleRoute = createRoute({
   method: 'get',
@@ -246,6 +247,7 @@ authRoutes.openapi(oauthCallbackRoute, async (c) => {
     return c.json({ success: false, error: 'Fallo en el callback de OAuth' }, 500);
   }
 });
+*/
 
 // 🚀 6. Logout
 const logoutRoute = createRoute({
@@ -336,5 +338,41 @@ authRoutes.openapi(meRoute, async (c) => {
   }
 });
 
+
+
+const refreshRoute = createRoute({
+  method: 'post',
+  path: '/refresh',
+  responses: { 200: { description: 'OK' }, 401: { description: 'No refresh token' } }
+})
+
+authRoutes.openapi(refreshRoute, async (c) => {
+  const cookie = c.req.header('cookie') ?? ''
+  const rt = cookie.match(/(?:^|;\s*)sb_refresh_token=([^;]+)/)?.[1]
+  if (!rt) return c.json({ success: false, error: 'No refresh token' }, 401)
+
+  try {
+    const session = await userService.refreshSession(rt)
+    const access = session?.access_token!
+    const refresh = session?.refresh_token!
+    const accessCookie = createSessionCookie(access) // ya la tienes
+    const isProduction = process.env.NODE_ENV === 'production'
+    const refreshCookie = [
+      `sb_refresh_token=${refresh}`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=${60 * 60 * 24 * 7}`, // ej. 7 días
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+
+    const csrf = issueCsrfCookie()
+    return c.json({ success: true }, 200, {
+      'Set-Cookie': [accessCookie, refreshCookie, csrf].join(', ')
+    })
+  } catch (e) {
+    return c.json({ success: false, error: 'Refresh failed' }, 401)
+  }
+})
 
 export default authRoutes;

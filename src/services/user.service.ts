@@ -75,7 +75,7 @@ export async function loginWithEmail(email: string, password: string) {
 /**
  * Login con Google OAuth
  * Retorna la URL de redirección para el frontend
- */
+ 
 export async function loginWithGoogle(): Promise<{ url: string }> {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
@@ -89,7 +89,7 @@ export async function loginWithGoogle(): Promise<{ url: string }> {
 
   return { url: data.url };
 }
-
+*/
 /**
  * Iniciar sesión con Magic Link (OTP por email)
  * Envía un enlace de inicio de sesión al correo del usuario.
@@ -147,6 +147,14 @@ export async function updatePassword(newPassword: string) {
 
   return { user: data.user, error };
 }
+
+// services/user.service.ts (añade)
+export async function refreshSession(refreshToken: string) {
+  const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken })
+  if (error) throw new Error(error.message)
+  return data.session // contiene access y refresh nuevos
+}
+
 
 // --- Métodos de Gestión de Perfil ---
 
