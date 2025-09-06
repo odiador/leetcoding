@@ -1,8 +1,9 @@
-// services/user.service.ts
 import type { Session } from '@supabase/supabase-js'
 import { APP_REDIRECT_URL } from '../config/env.js'
 import { redisService } from '../config/redis.js'
 import { supabase } from '../config/supabase.js'
+import { createClient } from '@supabase/supabase-js'
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config/env.js'
 
 /**
  * Tipo de perfil de usuario
@@ -167,8 +168,19 @@ export async function refreshSession(refreshToken: string) {
 /**
  * Obtener perfil desde la tabla profiles
  */
-export async function getUserById(userId: string): Promise<UserProfile> {
-  const { data: profile, error } = await supabase
+export async function getUserById(userId: string, accessToken?: string): Promise<UserProfile> {
+  let client = supabase
+  if (accessToken) {
+    client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    })
+  }
+
+  const { data: profile, error } = await client
     .from('profiles')
     .select('id, email, full_name, role, created_at, updated_at')
     .eq('id', userId)
@@ -190,9 +202,21 @@ export async function updateUser(
     address: string
     city: string
     country: string
-  }>
+  }>,
+  accessToken?: string
 ): Promise<UserProfile> {
-  const { data: user, error } = await supabase
+  let client = supabase
+  if (accessToken) {
+    client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    })
+  }
+
+  const { data: user, error } = await client
     .from('profiles')
     .update(updateData)
     .eq('id', userId)

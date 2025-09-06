@@ -391,10 +391,11 @@ authRoutes.openapi(meRoute, async (c) => {
   try {
     // Se asume que un middleware previo ha validado el token y ha puesto el 'userId' en el contexto
     let userId = c.get('userId') as string | undefined;
+    let token: string | undefined;
     if (!userId) {
       // Fallback: intentar obtener token desde header o cookie y validar con Supabase
       const authHeader = c.req.header('Authorization')
-      let token = authHeader ? authHeader.replace('Bearer ', '') : undefined
+      token = authHeader ? authHeader.replace('Bearer ', '') : undefined
       if (!token) {
         const cookie = c.req.header('cookie') ?? ''
         token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
@@ -405,10 +406,19 @@ authRoutes.openapi(meRoute, async (c) => {
       if (error || !data?.user) return c.json({ success: false, error: 'No autenticado' }, 401)
       userId = data.user.id
       c.set('userId', userId)
+    } else {
+      // Extract token for the query
+      const authHeader = c.req.header('Authorization')
+      token = authHeader ? authHeader.replace('Bearer ', '') : undefined
+      if (!token) {
+        const cookie = c.req.header('cookie') ?? ''
+        token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
+      }
     }
-    const userProfile = await userService.getUserById(userId);
+    const userProfile = await userService.getUserById(userId, token);
     return c.json({ success: true, data: userProfile });
   } catch (err) {
+    console.error('Error fetching user profile:', err);
     return c.json({ success: false, error: 'No se pudo obtener el perfil del usuario' }, 500);
   }
 });
