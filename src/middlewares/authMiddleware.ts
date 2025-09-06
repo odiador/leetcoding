@@ -48,13 +48,25 @@ async function setCachedUser(token: string, user: CachedUser, ttlSeconds: number
 
 export async function authMiddleware(c: Context, next: Next) {
   try {
+    let token: string | undefined
     const authHeader = c.req.header('Authorization')
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return c.json({ success: false, error: 'Missing or invalid token' }, 401)
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.replace('Bearer ', '').trim()
+    } else {
+      const cookieHeader = c.req.header('Cookie')
+      if (cookieHeader) {
+        const cookies = cookieHeader.split(';').map(c => c.trim().split('='))
+        const sbCookie = cookies.find(([name]) => name === 'sb_access_token')
+        if (sbCookie) {
+          token = sbCookie[1]
+        }
+      }
     }
 
-    const token = authHeader.replace('Bearer ', '').trim()
+    if (!token) {
+      return c.json({ success: false, error: 'Missing or invalid token' }, 401)
+    }
 
     // Try cache first
     const cached = await getCachedUser(token)
@@ -98,11 +110,23 @@ export async function authMiddleware(c: Context, next: Next) {
 // Optional auth middleware: if token present, validate with Supabase and set ctx, otherwise continue
 export async function optionalAuthMiddleware(c: Context, next: Next) {
   try {
+    let token: string | undefined
     const authHeader = c.req.header('Authorization')
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.replace('Bearer ', '').trim()
+      token = authHeader.replace('Bearer ', '').trim()
+    } else {
+      const cookieHeader = c.req.header('Cookie')
+      if (cookieHeader) {
+        const cookies = cookieHeader.split(';').map(c => c.trim().split('='))
+        const sbCookie = cookies.find(([name]) => name === 'sb_access_token')
+        if (sbCookie) {
+          token = sbCookie[1]
+        }
+      }
+    }
 
+    if (token) {
       const cached = await getCachedUser(token)
       if (cached) {
         c.set('userId', cached.id)
