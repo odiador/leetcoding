@@ -215,6 +215,22 @@ export async function getSession(accessToken: string) {
   const exists = await redisService.exists(`session:${accessToken}`)
   if (!exists) return null
 
+  // If an access token is provided, validate it directly with Supabase
+  if (accessToken) {
+    const { data, error } = await supabase.auth.getUser(accessToken)
+    if (error) throw new Error(`Could not validate access token: ${error.message}`)
+    if (!data?.user) return null
+
+    // Return a minimal session-like object containing the access token and user
+    return {
+      access_token: accessToken,
+      refresh_token: null,
+      expires_in: null,
+      user: data.user,
+    }
+  }
+
+  // Fallback: get the current session from the Supabase client (uses server-side stored session)
   const { data, error } = await supabase.auth.getSession()
   if (error) throw new Error(`Could not get session: ${error.message}`)
 

@@ -81,28 +81,18 @@ const createSessionCookie = (accessToken: string): string => {
   }
 
   const isProduction = process.env.NODE_ENV === 'production';
-  const cookieOptions = [
+  const accessCookie = [
+    `sb_access_token=${accessToken}`,
     `HttpOnly`,
     `Path=/`,
     `Max-Age=${ttl}`,
-    isProduction ? 'Secure' : '',
-    isProduction ? 'SameSite=Lax' : ''
-  ].filter(Boolean).join('; ');
+    `SameSite=Lax`,
+    isProduction ? 'Secure' : ''
+  ].filter(Boolean).join('; ')
 
-  return `sb_access_token=${accessToken}; ${cookieOptions}`;
-};
-
-const clearSessionCookie = (): string => {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const cookieOptions = [
-    `HttpOnly`,
-    `Path=/`,
-    `Max-Age=0`, // Expira la cookie inmediatamente
-    isProduction ? 'Secure' : '',
-    isProduction ? 'SameSite=Lax' : ''
-  ].filter(Boolean).join('; ');
-  return `sb_access_token=; ${cookieOptions}`;
+  return accessCookie
 }
+
 
 
 // --- Rutas de Autenticación ---
@@ -400,9 +390,21 @@ authRoutes.use('/me', cookieToAuthHeader);
 authRoutes.openapi(meRoute, async (c) => {
   try {
     // Se asume que un middleware previo ha validado el token y ha puesto el 'userId' en el contexto
-    const userId = c.get('userId');
+    let userId = c.get('userId') as string | undefined;
     if (!userId) {
-      return c.json({ success: false, error: 'No autenticado' }, 401);
+      // Fallback: intentar obtener token desde header o cookie y validar con Supabase
+      const authHeader = c.req.header('Authorization')
+      let token = authHeader ? authHeader.replace('Bearer ', '') : undefined
+      if (!token) {
+        const cookie = c.req.header('cookie') ?? ''
+        token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
+      }
+      if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+
+      const { data, error } = await userService.getUserByAccessToken(token)
+      if (error || !data?.user) return c.json({ success: false, error: 'No autenticado' }, 401)
+      userId = data.user.id
+      c.set('userId', userId)
     }
     const userProfile = await userService.getUserById(userId);
     return c.json({ success: true, data: userProfile });
@@ -460,5 +462,30 @@ authRoutes.openapi(refreshRoute, async (c) => {
     return c.json({ success: false, error: 'Refresh failed' }, 401)
   }
 })
+
+// Helper para borrar cookies de sesión
+const clearSessionCookie = (): string => {
+  const isProduction = process.env.NODE_ENV === 'production'
+  const accessCookie = [
+    `sb_access_token=;`,
+    `HttpOnly`,
+    `Path=/`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+
+  const refreshCookie = [
+    `sb_refresh_token=;`,
+    `HttpOnly`,
+    `Path=/auth`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+
+  const csrf = issueCsrfCookie()
+  return [accessCookie, refreshCookie, csrf].join(', ')
+}
 
 export default authRoutes;

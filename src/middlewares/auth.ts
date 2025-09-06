@@ -11,13 +11,15 @@ interface JWTPayload {
 
 export const authMiddleware: MiddlewareHandler = async (c, next) => {
   try {
+    // Try Authorization header first
     const authHeader = c.req.header('Authorization')
+    let token = authHeader ? authHeader.replace('Bearer ', '') : undefined
 
-    if (!authHeader) {
-      throw new AuthenticationError('No authorization header provided')
+    // Fallback: try sb_access_token cookie
+    if (!token) {
+      const cookie = c.req.header('cookie') ?? ''
+      token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
     }
-
-    const token = authHeader.replace('Bearer ', '')
 
     if (!token) {
       throw new AuthenticationError('No token provided')
@@ -31,9 +33,9 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
 
     const user = data.user
     // Add user info to context
-  c.set('userId', user.id)
-  c.set('userEmail', user.email ?? '')
-  c.set('tokenPayload', { userId: user.id, email: user.email ?? '' })
+    c.set('userId', user.id)
+    c.set('userEmail', user.email ?? '')
+    c.set('tokenPayload', { userId: user.id, email: user.email ?? '' })
 
     await next()
   } catch (error) {
@@ -45,18 +47,22 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
 // Optional auth middleware (doesn't throw if no token)
 export const optionalAuthMiddleware: MiddlewareHandler = async (c, next) => {
   try {
+    // Try Authorization header first
     const authHeader = c.req.header('Authorization')
+    let token = authHeader ? authHeader.replace('Bearer ', '') : undefined
 
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '')
+    // Fallback: try sb_access_token cookie
+    if (!token) {
+      const cookie = c.req.header('cookie') ?? ''
+      token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
+    }
 
-      if (token) {
-        const { data, error } = await userService.getUserByAccessToken(token)
-        if (data?.user && !error) {
-          c.set('userId', data.user.id)
-          c.set('userEmail', data.user.email ?? '')
-          c.set('tokenPayload', { userId: data.user.id, email: data.user.email ?? '' })
-        }
+    if (token) {
+      const { data, error } = await userService.getUserByAccessToken(token)
+      if (data?.user && !error) {
+        c.set('userId', data.user.id)
+        c.set('userEmail', data.user.email ?? '')
+        c.set('tokenPayload', { userId: data.user.id, email: data.user.email ?? '' })
       }
     }
 
