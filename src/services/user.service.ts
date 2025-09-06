@@ -73,6 +73,9 @@ export async function loginWithEmail(email: string, password: string) {
 
   // Guardar sesión en Redis con TTL
   await redisService.set(`session:${access_token}`, user.id, expires_in)
+  // Guardar refresh token en Redis para validación y rotación (TTL en días)
+  const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
+  await redisService.set(`refresh:${refresh_token}`, user.id, refreshTtlSeconds)
 
   return {
     user: data.user,
@@ -146,6 +149,14 @@ export async function refreshSession(refreshToken: string) {
   if (data.session) {
     const { access_token, refresh_token, expires_in, user } = data.session
     await redisService.set(`session:${access_token}`, user.id, expires_in)
+    // Rotate refresh token: delete old key and store new one with TTL
+    try {
+      await redisService.del(`refresh:${refreshToken}`)
+    } catch (e) {
+      // ignore
+    }
+    const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
+    await redisService.set(`refresh:${refresh_token}`, user.id, refreshTtlSeconds)
   }
 
   return data.session
@@ -235,6 +246,17 @@ export async function signOut(accessToken?: string) {
 
   if (error) {
     throw new Error(`Sign out failed: ${error.message}`)
+  }
+}
+
+/**
+ * Revoca (elimina) un refresh token almacenado en Redis (best-effort)
+ */
+export async function revokeRefreshToken(refreshToken: string) {
+  try {
+    await redisService.del(`refresh:${refreshToken}`)
+  } catch (e) {
+    // no hace falta fallar si Redis no está disponible
   }
 }
 

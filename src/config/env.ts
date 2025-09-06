@@ -27,6 +27,8 @@ export const envSchema = z.object({
   APP_REDIRECT_URL: z.url().optional(),
   POST_LOGOUT_REDIRECT_URL: z.url().optional(),
   CSRF_COOKIE: z.string().default('csrf_token'),
+  // Refresh token ttl in days (used for Redis + cookie Max-Age)
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(7),
 
   // Logging
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),

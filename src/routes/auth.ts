@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken'
 import { issueCsrfCookie } from '../middlewares/csrf.js'
 // Renombrado para mayor claridad, asumiendo que user.service.js exporta las funciones de auth.ts
 import * as userService from '../services/user.service.js'
+import { cookieToAuthHeader } from '../middlewares/cookieToAuthHeader.js';
 
 const authRoutes = new OpenAPIHono()
 
@@ -165,11 +166,34 @@ authRoutes.openapi(loginRoute, async (c) => {
     if (!session) throw new Error('No se pudo iniciar sesión');
 
     const sessionCookie = createSessionCookie(session.access_token);
+    const isProduction = process.env.NODE_ENV === 'production'
+    const refreshCookie = [
+      `sb_refresh_token=${session.refresh_token}`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=${60 * 60 * 24 * (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7)}`,
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+    // Ensure any stale access cookie scoped to /auth is cleared (prevents duplicate sb_access_token entries)
+    const clearAccessAuth = [
+      `sb_access_token=;`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=0`,
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+    const origin = c.req.header('Origin') || '';
 
     return c.json({
       success: true,
       session: session
-    }, 200, { 'Set-Cookie': sessionCookie });
+    }, 200, {
+      'Set-Cookie': [sessionCookie, refreshCookie, clearAccessAuth],
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Origin': origin,
+    });
   } catch (err) {
     return c.json({ success: false, error: 'Email o contraseña incorrectos' }, 401);
   }
@@ -273,8 +297,43 @@ authRoutes.openapi(logoutRoute, async (c) => {
   // La invalidación del token la maneja Supabase en el cliente.
   // Aquí, lo importante es eliminar la cookie HttpOnly del navegador.
   const cookie = clearSessionCookie();
+  // Clear refresh cookie as well
+  const isProduction = process.env.NODE_ENV === 'production'
+  const clearRefresh = [
+    `sb_refresh_token=;`,
+    `HttpOnly`,
+    `Path=/auth`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+
+  // Also clear any sb_access_token that might be scoped to /auth (duplicates)
+  const clearAccessAuth = [
+    `sb_access_token=;`,
+    `HttpOnly`,
+    `Path=/auth`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+
+  // Attempt to revoke refresh token in Redis if provided by client
+  try {
+    const cookieHeader = c.req.header('cookie') ?? ''
+    const rt = cookieHeader.match(/(?:^|;\s*)sb_refresh_token=([^;]+)/)?.[1]
+    if (rt) {
+      await userService.revokeRefreshToken(rt)
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  const origin = c.req.header('Origin') || '';
   return c.json({ success: true, message: 'Sesión cerrada exitosamente' }, 200, {
-    'Set-Cookie': cookie
+    'Set-Cookie': [cookie, clearRefresh, clearAccessAuth],
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Origin': origin,
   });
 });
 
@@ -324,6 +383,7 @@ authRoutes.openapi(updatePasswordRoute, async (c) => {
 });
 
 
+
 // 🚀 9. Obtener perfil del usuario actual (ruta protegida)
 const meRoute = createRoute({
   method: 'get',
@@ -335,6 +395,8 @@ const meRoute = createRoute({
   }
 })
 
+// Aplica el middleware que copia la cookie a Authorization antes del authMiddleware
+authRoutes.use('/me', cookieToAuthHeader);
 authRoutes.openapi(meRoute, async (c) => {
   try {
     // Se asume que un middleware previo ha validado el token y ha puesto el 'userId' en el contexto
@@ -366,20 +428,33 @@ authRoutes.openapi(refreshRoute, async (c) => {
     const session = await userService.refreshSession(rt)
     const access = session?.access_token!
     const refresh = session?.refresh_token!
-    const accessCookie = createSessionCookie(access) // ya la tienes
+    const accessCookie = createSessionCookie(access) // cookie de acceso con Path=/
     const isProduction = process.env.NODE_ENV === 'production'
     const refreshCookie = [
       `sb_refresh_token=${refresh}`,
       `HttpOnly`,
       `Path=/auth`,
-      `Max-Age=${60 * 60 * 24 * 7}`, // ej. 7 días
+      `Max-Age=${60 * 60 * 24 * (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7)}`,
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+
+    // Clear any stale sb_access_token set with Path=/auth to avoid duplicates
+    const clearAccessAuth = [
+      `sb_access_token=;`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=0`,
       isProduction ? 'Secure' : '',
       `SameSite=Lax`
     ].filter(Boolean).join('; ')
 
     const csrf = issueCsrfCookie()
+    const origin = c.req.header('Origin') || '';
     return c.json({ success: true }, 200, {
-      'Set-Cookie': [accessCookie, refreshCookie, csrf].join(', ')
+      'Set-Cookie': [accessCookie, refreshCookie, clearAccessAuth, csrf],
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Origin': origin,
     })
   } catch (e) {
     return c.json({ success: false, error: 'Refresh failed' }, 401)

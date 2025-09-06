@@ -25,8 +25,10 @@ app.use('*', async (c, next) => {
   const allowedOrigins = ['http://localhost:3000']
 
   if (origin && allowedOrigins.includes(origin)) {
-    c.header('Access-Control-Allow-Origin', origin)
-    c.header('Vary', 'Origin')
+  c.header('Access-Control-Allow-Origin', origin)
+  c.header('Vary', 'Origin')
+  // Allow cookies/credentials from the frontend when the origin is allowed
+  c.header('Access-Control-Allow-Credentials', 'true')
   } else {
     // fallback: allow all (safe for local dev) — change this for production
     c.header('Access-Control-Allow-Origin', '*')
@@ -43,6 +45,8 @@ app.use('*', async (c, next) => {
 
   await next()
 })
+
+
 
 // OpenAPI documentation
 app.doc('/doc', {
