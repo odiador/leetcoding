@@ -1,8 +1,6 @@
 import { z } from 'zod'
 import dotenv from 'dotenv'
 
-const envValues = process.env;
-console.log({ envValues })
 if (process.env.NODE_ENV !== 'production')
   dotenv.config()
 
@@ -13,22 +11,21 @@ export const envSchema = z.object({
   PORT: z.coerce.number().default(3010),
 
   // Database
-  SUPABASE_URL: z.string().url(),
+  SUPABASE_URL: z.url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 
   // Redis
-  REDIS_URL: z.string().url().optional(),
+  REDIS_URL: z.url().optional(),
   REDIS_HOST: z.string().default('localhost'),
   REDIS_PORT: z.coerce.number().default(6379),
   REDIS_PASSWORD: z.string().optional(),
 
   // Auth
-  JWT_SECRET: z.string().min(32),
   // App URLs
-  API_URL: z.string().url().optional(),
-  APP_REDIRECT_URL: z.string().url().optional(),
-  POST_LOGOUT_REDIRECT_URL: z.string().url().optional(),
+  API_URL: z.url().optional(),
+  APP_REDIRECT_URL: z.url().optional(),
+  POST_LOGOUT_REDIRECT_URL: z.url().optional(),
   CSRF_COOKIE: z.string().default('csrf_token'),
 
   // Logging
@@ -49,7 +46,6 @@ export const {
   REDIS_HOST,
   REDIS_PORT,
   REDIS_PASSWORD,
-  JWT_SECRET,
   LOG_LEVEL,
   APP_REDIRECT_URL,
   POST_LOGOUT_REDIRECT_URL,

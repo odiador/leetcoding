@@ -1,6 +1,5 @@
 import type { MiddlewareHandler } from 'hono'
-import jwt from 'jsonwebtoken'
-import { JWT_SECRET } from '../config/env.js'
+import * as userService from '../services/user.service.js'
 import { AuthenticationError } from '../utils/errors.js'
 
 interface JWTPayload {
@@ -24,23 +23,22 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
       throw new AuthenticationError('No token provided')
     }
 
-    // Verify JWT token
-    const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload
+    // Let Supabase validate the token and return the user
+    const { data, error } = await userService.getUserByAccessToken(token)
+    if (error || !data?.user) {
+      throw new AuthenticationError('Invalid token')
+    }
 
+    const user = data.user
     // Add user info to context
-    c.set('userId', decoded.userId)
-    c.set('userEmail', decoded.email)
-    c.set('tokenPayload', decoded)
+  c.set('userId', user.id)
+  c.set('userEmail', user.email ?? '')
+  c.set('tokenPayload', { userId: user.id, email: user.email ?? '' })
 
     await next()
   } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError) {
-      throw new AuthenticationError('Invalid token')
-    }
-    if (error instanceof jwt.TokenExpiredError) {
-      throw new AuthenticationError('Token expired')
-    }
-    throw error
+    if (error instanceof AuthenticationError) throw error
+    throw new AuthenticationError((error as Error).message || 'Invalid token')
   }
 }
 
@@ -53,10 +51,12 @@ export const optionalAuthMiddleware: MiddlewareHandler = async (c, next) => {
       const token = authHeader.replace('Bearer ', '')
 
       if (token) {
-        const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload
-        c.set('userId', decoded.userId)
-        c.set('userEmail', decoded.email)
-        c.set('tokenPayload', decoded)
+        const { data, error } = await userService.getUserByAccessToken(token)
+        if (data?.user && !error) {
+          c.set('userId', data.user.id)
+          c.set('userEmail', data.user.email ?? '')
+          c.set('tokenPayload', { userId: data.user.id, email: data.user.email ?? '' })
+        }
       }
     }
 
