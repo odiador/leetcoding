@@ -83,6 +83,7 @@ export async function getProductById(id: string): Promise<Product | null> {
   return product
 }
 
+
 export async function createProduct(productData: CreateProductData): Promise<Product> {
   const { data: product, error } = await supabase
     .from('products')
@@ -98,7 +99,7 @@ export async function createProduct(productData: CreateProductData): Promise<Pro
     throw new Error(`Failed to create product: ${error.message}`)
   }
 
-  return product
+  return product;
 }
 
 export async function updateProduct(id: string, updateData: Partial<CreateProductData>): Promise<Product> {
