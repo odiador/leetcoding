@@ -18,6 +18,7 @@ export const envSchema = z.object({
   // Redis
   REDIS_URL: z.url().optional(),
   REDIS_HOST: z.string().default('localhost'),
+  REDIS_TOKEN: z.string().optional(),
   REDIS_PORT: z.coerce.number().default(6379),
   REDIS_PASSWORD: z.string().optional(),
 
@@ -49,6 +50,7 @@ export const {
   SUPABASE_SERVICE_ROLE_KEY,
   REDIS_URL,
   REDIS_HOST,
+  REDIS_TOKEN,
   REDIS_PORT,
   REDIS_PASSWORD,
   LOG_LEVEL,
