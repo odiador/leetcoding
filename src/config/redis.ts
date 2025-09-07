@@ -1,44 +1,48 @@
-import { pino } from 'pino'
-import { createClient } from 'redis'
-import { REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD } from './env.js'
-import { RedisService } from '../services/redis.service.js'
+import { pino } from "pino";
+import { createClient } from "redis";
+import { REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, REDIS_URL } from "./env.js";
 
-let redisClient: ReturnType<typeof createClient> | null = null
-// Redis setup - use validated REDIS_URL if provided, otherwise explicit host/port/password
-const redisUrl = REDIS_URL
-const redisHost = REDIS_HOST ?? 'localhost'
-const redisPort = Number(REDIS_PORT ?? 6379)
-const redisPassword = REDIS_PASSWORD ?? REDIS_URL?.match(/redis:\/\:?([^@]+)@/)?.[1]
+// Variables de entorno
+const redisUrl = REDIS_URL;
+const redisHost = REDIS_HOST || "redis"; // default para docker
+const redisPort = Number(REDIS_PORT || 6379);
+const redisPassword = REDIS_PASSWORD;
 
-export async function initRedis(logger: pino.Logger): Promise<ReturnType<typeof createClient>> {
-    if (redisClient) return redisClient
+let redisClient: ReturnType<typeof createClient> | null = null;
+
+export async function initRedis(logger: pino.Logger) {
+    if (redisClient) return redisClient;
+
     const client = redisUrl
         ? createClient({
             url: redisUrl,
             socket: {
-                reconnectStrategy: (retries: number) => Math.min(retries * 50, 2000),
-                connectTimeout: 5000
-            }
+                reconnectStrategy: (retries) => Math.min(retries * 50, 2000),
+                connectTimeout: 5000,
+            },
         })
         : createClient({
             socket: {
                 host: redisHost,
                 port: redisPort,
-                reconnectStrategy: (retries: number) => Math.min(retries * 50, 2000),
-                connectTimeout: 5000
+                reconnectStrategy: (retries) => Math.min(retries * 50, 2000),
+                connectTimeout: 5000,
             },
-            password: redisPassword
-        })
-    client.on('error', (err) => logger.error({ err }, 'Redis error'))
+            password: redisPassword,
+        });
+
+    client.on("error", (err) => logger.error({ err }, "Redis error"));
+
     try {
-        await client.connect()
-        logger.info(`Connected to Redis at ${redisUrl ? redisUrl : `${redisHost}:${redisPort}`}`)
-        redisClient = client
-        return client
+        await client.connect();
+        logger.info(
+            `✅ Connected to Redis at ${redisUrl || `${redisHost}:${redisPort}`
+            }`
+        );
+        redisClient = client;
+        return client;
     } catch (err) {
-        logger.error({ err }, 'Failed to connect to Redis')
-        throw err
+        logger.error({ err }, "❌ Failed to connect to Redis");
+        throw err;
     }
 }
-
-export const redisService = new RedisService();
