@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js'
 import { APP_REDIRECT_URL, SUPABASE_ANON_KEY, SUPABASE_URL } from '../config/env.js'
 import { supabase } from '../config/supabase.js'
 import { redisService } from '../services/redis.service.js'
+import { Context } from 'hono'
+import { issueCsrfCookie } from '../middlewares/csrf.js'
 
 /**
  * Tipo de perfil de usuario
@@ -162,6 +164,89 @@ export async function refreshSession(refreshToken: string) {
   return data.session
 }
 
+
+
+export const createSupabaseClient = () => {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  })
+}
+
+// --- MFA helpers ---
+export type AuthError = { message: string }
+
+export type AuthMFAEnrollTOTPResponse =
+  | {
+    data: {
+      id: string
+      type: 'totp'
+      totp: {
+        qr_code: string
+        secret: string
+        uri: string
+      }
+      friendly_name?: string
+    }
+    error: null
+  }
+  | {
+    data: null
+    error: AuthError
+  }
+
+export async function enrollMfa(): Promise<AuthMFAEnrollTOTPResponse> {
+  const client = createSupabaseClient()
+  try {
+    const { data, error } = await client.auth.mfa.enroll({ factorType: 'totp' })
+    return { data: data as any, error: error as any }
+  } catch (err: any) {
+    return { data: null, error: { message: err?.message ?? String(err) } }
+  }
+}
+
+// --- Cookie helpers exported for use in routes ---
+export function clearCookie(name: string, path = '/') {
+  const isProduction = process.env.NODE_ENV === 'production'
+  return [
+    `${name}=;`,
+    `HttpOnly`,
+    `Path=${path}`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+}
+
+export const clearSessionCookie = (): string => {
+  const isProduction = process.env.NODE_ENV === 'production'
+  const accessCookie = [
+    `sb_access_token=;`,
+    `HttpOnly`,
+    `Path=/`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+
+  const refreshCookie = [
+    `sb_refresh_token=;`,
+    `HttpOnly`,
+    `Path=/auth`,
+    `Max-Age=0`,
+    isProduction ? 'Secure' : '',
+    `SameSite=Lax`
+  ].filter(Boolean).join('; ')
+
+  const csrf = issueCsrfCookie()
+  return [accessCookie, refreshCookie, csrf].join(', ')
+}
+
+
+
 // --- Métodos de Gestión de Perfil ---
 
 /**
@@ -318,4 +403,13 @@ export function onAuthStateChange(
 export async function getUserByAccessToken(access_token: string) {
   const { data, error } = await supabase.auth.getUser(access_token)
   return { data, error }
+}
+
+
+export const verifyMFA = async (factorId: string, code: string) => {
+  const supabase = createSupabaseClient()
+  return supabase.auth.mfa.challengeAndVerify({
+    factorId,
+    code
+  })
 }

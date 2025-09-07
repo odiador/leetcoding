@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken'
 import { issueCsrfCookie } from '../middlewares/csrf.js'
 // Renombrado para mayor claridad, asumiendo que user.service.js exporta las funciones de auth.ts
 import * as userService from '../services/user.service.js'
+import { clearCookie, clearSessionCookie } from '../services/user.service.js'
 import { cookieToAuthHeader } from '../middlewares/cookieToAuthHeader.js';
 
 const authRoutes = new OpenAPIHono()
@@ -210,69 +211,7 @@ authRoutes.openapi(magicLinkRoute, async (c) => {
   }
 });
 
-/*
-// 🚀 4. Login con Google (inicia el flujo)
-const loginGoogleRoute = createRoute({
-  method: 'get',
-  path: '/login/google',
-  responses: {
-    200: { description: 'URL de redirección de Google', content: { 'application/json': { schema: z.object({ success: z.boolean(), url: z.string().url() }) } } },
-    500: { description: 'Error al iniciar sesión con Google' }
-  }
-})
 
-authRoutes.openapi(loginGoogleRoute, async (c) => {
-  try {
-    const { url } = await userService.loginWithGoogle();
-    // Si el cliente es un navegador, redirigir directamente
-    if (c.req.header('accept')?.includes('text/html')) {
-      return c.redirect(url);
-    }
-    return c.json({ success: true, url });
-  } catch (error) {
-    return c.json({ success: false, error: 'No se pudo obtener la URL de Google' }, 500);
-  }
-});
-
-// 🚀 5. OAuth Callback (Google redirige aquí)
-const oauthCallbackRoute = createRoute({
-  method: 'post',
-  path: '/oauth/callback',
-  request: { body: { content: { 'application/json': { schema: z.object({ access_token: z.string() }) } } } },
-  responses: {
-    200: { description: 'Callback exitoso', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
-    400: { description: 'Token no proporcionado' },
-    401: { description: 'Token inválido' }
-  }
-});
-
-authRoutes.openapi(oauthCallbackRoute, async (c) => {
-  try {
-    const { access_token } = c.req.valid('json');
-    const { data, error } = await userService.getUserByAccessToken(access_token);
-
-    if (error || !data.user) {
-      return c.json({ success: false, error: 'Token de acceso inválido' }, 401);
-    }
-
-    const sessionCookie = createSessionCookie(access_token);
-    const user = data.user;
-
-    return c.json({
-      success: true,
-      data: {
-        id: user.id,
-        email: user.email!,
-        full_name: user.user_metadata.full_name,
-        role: user.user_metadata.role
-      }
-    }, 200, { 'Set-Cookie': sessionCookie });
-
-  } catch (err) {
-    return c.json({ success: false, error: 'Fallo en el callback de OAuth' }, 500);
-  }
-});
-*/
 
 // 🚀 6. Logout
 const logoutRoute = createRoute({
@@ -473,29 +412,85 @@ authRoutes.openapi(refreshRoute, async (c) => {
   }
 })
 
-// Helper para borrar cookies de sesión
-const clearSessionCookie = (): string => {
-  const isProduction = process.env.NODE_ENV === 'production'
-  const accessCookie = [
-    `sb_access_token=;`,
-    `HttpOnly`,
-    `Path=/`,
-    `Max-Age=0`,
-    isProduction ? 'Secure' : '',
-    `SameSite=Lax`
-  ].filter(Boolean).join('; ')
+// ... cookie helpers moved to services/user.service.ts
 
-  const refreshCookie = [
-    `sb_refresh_token=;`,
-    `HttpOnly`,
-    `Path=/auth`,
-    `Max-Age=0`,
-    isProduction ? 'Secure' : '',
-    `SameSite=Lax`
-  ].filter(Boolean).join('; ')
 
-  const csrf = issueCsrfCookie()
-  return [accessCookie, refreshCookie, csrf].join(', ')
-}
+// 1. Enroll MFA
+const enrollMfaRoute = createRoute({
+  method: 'post',
+  path: '/mfa/enroll',
+  security: [{ Bearer: [] }],
+  responses: {
+    200: { description: 'QR code y factorId generados', content: { 'application/json': { schema: z.object({ qr_code: z.string(), factor_id: z.string() }) } } },
+    401: { description: 'No autenticado' },
+  },
+});
+
+authRoutes.openapi(enrollMfaRoute, async (c) => {
+  const { data, error } = await userService.enrollMfa();
+  if (error) return c.json({ success: false, error: error.message }, 400);
+
+  // Supabase MFA enroll returns `data.totp.qr_code` (and `.uri`) inside the response
+  return c.json({ success: true, qr_code: data?.totp?.qr_code ?? data?.totp?.uri, factor_id: data?.id });
+});
+
+// 2. Verify MFA
+const verifyMfaRoute = createRoute({
+  method: 'post',
+  path: '/mfa/verify',
+  security: [{ Bearer: [] }],
+  request: { body: { content: { 'application/json': { schema: z.object({ factor_id: z.string(), code: z.string() }) } } } },
+  responses: { 200: { description: 'MFA activada correctamente' }, 400: { description: 'Código inválido' } },
+});
+
+authRoutes.openapi(verifyMfaRoute, async (c) => {
+  const { factor_id, code } = c.req.valid('json');
+  const { data, error } = await userService.verifyMFA(factor_id, code);
+  if (error) return c.json({ success: false, error: (error as any)?.message ?? 'MFA verification failed' }, 400);
+
+  return c.json({ success: true, message: 'MFA activada correctamente', data });
+});
+
+// 3. Challenge MFA al login
+const loginMfaRoute = createRoute({
+  method: 'post',
+  path: '/mfa/challenge',
+  request: { body: { content: { 'application/json': { schema: z.object({ factor_id: z.string(), code: z.string() }) } } } },
+  responses: { 200: { description: 'Login completado' }, 400: { description: 'Código incorrecto' } },
+});
+
+authRoutes.openapi(loginMfaRoute, async (c) => {
+  const { factor_id, code } = c.req.valid('json');
+  const { data, error } = await userService.verifyMFA(factor_id, code);
+  if (error) return c.json({ success: false, error: error.message }, 400);
+
+  /**
+   * export type AuthMFAVerifyResponse =
+     | {
+         data: {
+           access_token: string
+   
+           token_type: string
+   
+           expires_in: number
+   
+           refresh_token: string
+   
+           user: User
+         }
+         error: null
+       }
+     | {
+         data: null
+         error: AuthError
+       }
+   
+   */
+  // Guardar sesión en cookie y Redis
+  const sessionCookie = createSessionCookie(data.access_token);
+  const refreshCookie = clearCookie('sb_refresh_token', '/auth'); // o crea uno nuevo según tu flujo
+
+  return c.json({ success: true, session: data }, 200, { 'Set-Cookie': [sessionCookie, refreshCookie] });
+});
 
 export default authRoutes;
