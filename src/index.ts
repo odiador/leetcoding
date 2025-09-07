@@ -22,7 +22,7 @@ const app = new OpenAPIHono();
 // CORS middleware: allow frontend during development (adjust origins in production)
 app.use('*', async (c, next) => {
   const origin = c.req.header('Origin') || ''
-  const allowedOrigins = ['http://localhost:3000']
+  const allowedOrigins = ['http://localhost:3000','https://mercador.app']
 
   if (origin && allowedOrigins.includes(origin)) {
   c.header('Access-Control-Allow-Origin', origin)
