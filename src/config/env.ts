@@ -24,6 +24,10 @@ export const envSchema = z.object({
 
   // Auth
   // App URLs
+
+  
+  UPSTASH_REDIS_REST_URL: z.url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
   API_URL: z.url().optional(),
   APP_REDIRECT_URL: z.url().optional(),
   POST_LOGOUT_REDIRECT_URL: z.url().optional(),
@@ -48,6 +52,8 @@ export const {
   SUPABASE_ANON_KEY,
   BUCKET_ACCESS_ID,
   SUPABASE_SERVICE_ROLE_KEY,
+  UPSTASH_REDIS_REST_URL,
+  UPSTASH_REDIS_REST_TOKEN,
   REDIS_URL,
   REDIS_HOST,
   REDIS_TOKEN,

@@ -1,9 +1,8 @@
 import type { Session } from '@supabase/supabase-js'
-import { APP_REDIRECT_URL } from '../config/env.js'
-import { redisService } from '../config/redis.js'
-import { supabase } from '../config/supabase.js'
 import { createClient } from '@supabase/supabase-js'
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config/env.js'
+import { APP_REDIRECT_URL, SUPABASE_ANON_KEY, SUPABASE_URL } from '../config/env.js'
+import { supabase } from '../config/supabase.js'
+import { redisService } from '../services/redis.service.js'
 
 /**
  * Tipo de perfil de usuario
