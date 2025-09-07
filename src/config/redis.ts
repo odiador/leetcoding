@@ -1,5 +1,6 @@
 import { pino } from "pino";
 import { createClient } from "redis";
+import { RedisService } from "../services/redis.service.js";
 import { REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, REDIS_URL } from "./env.js";
 
 // Variables de entorno
@@ -46,3 +47,5 @@ export async function initRedis(logger: pino.Logger) {
         throw err;
     }
 }
+
+export const redisService = new RedisService();
