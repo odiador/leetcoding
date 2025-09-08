@@ -1,6 +1,6 @@
 
 import { supabase, supabaseAdmin } from '../config/supabase.js'
-import { SUPABASE_URL } from '../config/env.js'
+import { SUPABASE_URL, BUCKET_ACCESS_ID, BUCKET_ACCESS_KEY } from '../config/env.js'
 import { createProductKey, CreateProductKeyData } from './product_key.service.js'
 
 export interface Product {
@@ -21,6 +21,8 @@ export interface CreateProductData {
   price: number
   category: string
   image_url?: string
+  // Nuevo: archivo de imagen (File | Buffer) cuando se usa form-data
+  image_file?: File | Buffer
   stock_quantity: number
   product_keys?: Omit<CreateProductKeyData, 'product_id'>[] // Opcional: claves a crear junto con el producto
 }
@@ -172,6 +174,44 @@ export async function createProduct(productData: CreateProductData): Promise<Pro
 export async function updateProduct(id: string, updateData: Partial<CreateProductData>): Promise<Product> {
   const primary = supabaseAdmin ?? supabase
   const fallback = supabaseAdmin ? supabase : supabaseAdmin
+
+  // Si viene un archivo de imagen en updateData, subirlo al storage de Supabase
+  try {
+    const maybeFile = (updateData as any)?.image_file
+    if (maybeFile) {
+      // Generar key/filename único
+      const timestamp = Date.now()
+      const extension = typeof (maybeFile as any).name === 'string'
+        ? ((maybeFile as any).name.split('.').pop() || 'png')
+        : 'png'
+      const fileName = `products/${id}/${timestamp}.${extension}`
+
+      // Supabase storage espera un Blob/Buffer/File
+      const fileBody = maybeFile instanceof Buffer ? maybeFile : (maybeFile as File)
+
+      // Subir usando el cliente supabase (requiere que supabase client esté configurado con keys)
+      const { data: uploadData, error: uploadError } = await primary.storage
+        .from('images')
+        .upload(fileName, fileBody, { cacheControl: '3600', upsert: false })
+
+      if (uploadError) {
+        throw uploadError
+      }
+
+  // Obtener URL pública del archivo subido
+  // Manejar distintos shapes de retorno entre versiones del SDK
+  const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
+  const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+  ;(updateData as any).image_url = publicUrl
+
+      // Eliminar campo image_file para que no se intente guardar en la tabla
+      delete (updateData as any).image_file
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to upload image to storage', err)
+    throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
+  }
 
   async function runUpdate(dbClient: any) {
     return dbClient

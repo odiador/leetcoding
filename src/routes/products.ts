@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import * as productService from '../services/product.service.js'
 import * as productKeyService from '../services/product_key.service.js'
+import  {BUCKET_ACCESS_ID,BUCKET_ACCESS_KEY} from '../config/env.js'
 
 const productRoutes = new OpenAPIHono()
 

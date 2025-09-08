@@ -8,6 +8,17 @@ import { cookieToAuthHeader } from '../middlewares/cookieToAuthHeader.js';
 
 const authRoutes = new OpenAPIHono()
 
+// Helper: Extrae token desde Authorization header o cookie sb_access_token
+function getTokenFromRequest(c: any): string | undefined {
+  const authHeader = c.req.header('Authorization')
+  let token = authHeader ? authHeader.replace('Bearer ', '') : undefined
+  if (!token) {
+    const cookie = c.req.header('cookie') ?? ''
+    token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
+  }
+  return token
+}
+
 // --- Zod Schemas ---
 
 const SignupSchema = z.object({
@@ -333,13 +344,8 @@ authRoutes.openapi(meRoute, async (c) => {
     let token: string | undefined;
     if (!userId) {
       // Fallback: intentar obtener token desde header o cookie y validar con Supabase
-      const authHeader = c.req.header('Authorization')
-      token = authHeader ? authHeader.replace('Bearer ', '') : undefined
-      if (!token) {
-        const cookie = c.req.header('cookie') ?? ''
-        token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
-      }
-      if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+  token = getTokenFromRequest(c)
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
 
       const { data, error } = await userService.getUserByAccessToken(token)
       if (error || !data?.user) return c.json({ success: false, error: 'No autenticado' }, 401)
@@ -347,12 +353,7 @@ authRoutes.openapi(meRoute, async (c) => {
       c.set('userId', userId)
     } else {
       // Extract token for the query
-      const authHeader = c.req.header('Authorization')
-      token = authHeader ? authHeader.replace('Bearer ', '') : undefined
-      if (!token) {
-        const cookie = c.req.header('cookie') ?? ''
-        token = cookie.match(/(?:^|;\s*)sb_access_token=([^;]+)/)?.[1]
-      }
+  token = getTokenFromRequest(c)
     }
     const userProfile = await userService.getUserById(userId, token);
     return c.json({ success: true, data: userProfile });
@@ -421,7 +422,7 @@ const enrollMfaRoute = createRoute({
   responses: { 200: { description: 'Factor TOTP enrolado' } }
 })
 authRoutes.openapi(enrollMfaRoute, async (c) => {
-  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const token = getTokenFromRequest(c)
   if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
   const resp = await userService.enrollMfa(token)
   if (resp.error) return c.json({ success: false, error: resp.error }, 400)
@@ -447,7 +448,7 @@ const verifyMfaRoute = createRoute({
   responses: { 200: { description: 'Factor verificado' } }
 })
 authRoutes.openapi(verifyMfaRoute, async (c) => {
-  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const token = getTokenFromRequest(c)
   if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
   const { factorId, code } = c.req.valid('json')
   const resp = await userService.verifyMFA(token, factorId, code)
@@ -467,7 +468,7 @@ authRoutes.openapi(enrollMfaRoute, async (c) => {
 
 authRoutes.openapi(verifyMfaRoute, async (c) => {
   const { factorId, code } = c.req.valid('json');
-  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const token = getTokenFromRequest(c)
   if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
 
   const { data, error } = await userService.verifyMFA(token, factorId, code);
