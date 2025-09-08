@@ -1,4 +1,6 @@
+
 import { supabase } from '../config/supabase.js'
+import { createProductKey, CreateProductKeyData } from './product_key.service.js'
 
 export interface Product {
   id: string
@@ -19,6 +21,7 @@ export interface CreateProductData {
   category: string
   image_url?: string
   stock_quantity: number
+  product_keys?: Omit<CreateProductKeyData, 'product_id'>[] // Opcional: claves a crear junto con el producto
 }
 
 export interface ProductFilters {
@@ -85,10 +88,12 @@ export async function getProductById(id: string): Promise<Product | null> {
 
 
 export async function createProduct(productData: CreateProductData): Promise<Product> {
+  // Extraer product_keys si vienen
+  const { product_keys, ...productFields } = productData as any;
   const { data: product, error } = await supabase
     .from('products')
     .insert({
-      ...productData,
+      ...productFields,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     })
@@ -97,6 +102,13 @@ export async function createProduct(productData: CreateProductData): Promise<Pro
 
   if (error) {
     throw new Error(`Failed to create product: ${error.message}`)
+  }
+
+  // Si hay product_keys, crearlas asociadas al producto
+  if (Array.isArray(product_keys) && product_keys.length > 0) {
+    for (const keyData of product_keys) {
+      await createProductKey({ ...keyData, product_id: product.id });
+    }
   }
 
   return product;
