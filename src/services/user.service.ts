@@ -384,7 +384,7 @@ export async function updateUserProfile(
           if (uploadError) throw uploadError
           const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
           const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
-          updatePayload.avatar_url = publicUrl
+          updatePayload.image = publicUrl
         }
       } else if (image_file?.size > 0 || image_file instanceof Buffer) {
         // Caso File / Buffer (Node o navegador)
@@ -399,7 +399,7 @@ export async function updateUserProfile(
         if (uploadError) throw uploadError
         const publicUrlResult: any = storageClient.storage.from('images').getPublicUrl(fileName)
         const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
-        updatePayload.avatar_url = publicUrl
+        updatePayload.image = publicUrl
       }
     }
   } catch (err) {
