@@ -1,4 +1,4 @@
-import type { Session } from '@supabase/supabase-js'
+import type { Factor, Session } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import { APP_REDIRECT_URL, SUPABASE_ANON_KEY, SUPABASE_URL } from '../config/env.js'
 import { supabase } from '../config/supabase.js'
@@ -166,8 +166,11 @@ export async function refreshSession(refreshToken: string) {
 
 
 
-export const createSupabaseClient = () => {
+export const createSupabaseClient = (accessToken: string) => {
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    },
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -175,6 +178,7 @@ export const createSupabaseClient = () => {
     }
   })
 }
+
 
 // --- MFA helpers ---
 export type AuthError = { message: string }
@@ -198,11 +202,36 @@ export type AuthMFAEnrollTOTPResponse =
     error: AuthError
   }
 
-export async function enrollMfa(): Promise<AuthMFAEnrollTOTPResponse> {
-  const client = createSupabaseClient()
+export async function enrollMfa(accessToken: string): Promise<AuthMFAEnrollTOTPResponse> {
+  const client = createSupabaseClient(accessToken)
+
   try {
+    // Enroll un nuevo factor TOTP
+
+
+    
+    // 🔍 Listar todos los factores para este usuario
+    const { data: factorsData, error: listError } = await client.auth.mfa.listFactors()
+    if (listError) {
+      return { data: null, error: listError }
+    } else {
+      const unverified = factorsData?.all?.filter(
+        (f: Factor) => f.status !== "verified")
+
+      for (const factor of unverified) {
+        await client.auth.mfa.unenroll({ factorId: factor.id })
+      }
+    }
+
+    
     const { data, error } = await client.auth.mfa.enroll({ factorType: 'totp' })
-    return { data: data as any, error: error as any }
+
+    if (error) {
+      return { data: null, error }
+    }
+
+
+    return { data: data as any, error: null }
   } catch (err: any) {
     return { data: null, error: { message: err?.message ?? String(err) } }
   }
@@ -406,10 +435,23 @@ export async function getUserByAccessToken(access_token: string) {
 }
 
 
-export const verifyMFA = async (factorId: string, code: string) => {
-  const supabase = createSupabaseClient()
-  return supabase.auth.mfa.challengeAndVerify({
+export const verifyMFA = async (
+  accessToken: string,
+  factorId: string,
+  code: string
+) => {
+  const client = createSupabaseClient(accessToken)
+
+  // Paso 1: crear challenge
+  const { data: challenge, error: challengeError } = await client.auth.mfa.challenge({ factorId })
+  if (challengeError) return { data: null, error: challengeError }
+
+  // Paso 2: verificar challenge con el código TOTP
+  const { data: verified, error: verifyError } = await client.auth.mfa.verify({
     factorId,
-    code
+    challengeId: challenge.id,
+    code,
   })
+
+  return { data: verified, error: verifyError }
 }

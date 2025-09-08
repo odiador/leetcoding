@@ -14,7 +14,7 @@ const SignupSchema = z.object({
   email: z.email(),
   password: z.string()
     .min(8, 'La contraseña debe tener al menos 8 caracteres')
-    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/, 
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/,
       'La contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
   full_name: z.string().min(2, 'El nombre completo es requerido'),
   country: z.string().optional(),
@@ -47,7 +47,7 @@ const LoginSchema = z.object({
   email: z.email(),
   password: z.string()
     .min(8, 'La contraseña debe tener al menos 8 caracteres')
-    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/, 
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/,
       'La contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
 })
 
@@ -62,7 +62,7 @@ const RequestPasswordResetSchema = z.object({
 const UpdatePasswordSchema = z.object({
   newPassword: z.string()
     .min(8, 'La nueva contraseña debe tener al menos 8 caracteres')
-    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/, 
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/,
       'La nueva contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
 });
 
@@ -412,85 +412,69 @@ authRoutes.openapi(refreshRoute, async (c) => {
   }
 })
 
-// ... cookie helpers moved to services/user.service.ts
 
 
-// 1. Enroll MFA
 const enrollMfaRoute = createRoute({
   method: 'post',
   path: '/mfa/enroll',
   security: [{ Bearer: [] }],
-  responses: {
-    200: { description: 'QR code y factorId generados', content: { 'application/json': { schema: z.object({ qr_code: z.string(), factor_id: z.string() }) } } },
-    401: { description: 'No autenticado' },
+  responses: { 200: { description: 'Factor TOTP enrolado' } }
+})
+authRoutes.openapi(enrollMfaRoute, async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+  const resp = await userService.enrollMfa(token)
+  if (resp.error) return c.json({ success: false, error: resp.error }, 400)
+  return c.json({ ok: true, factorId: resp.data.id, uri: resp.data.totp.uri })
+})
+
+const verifyMfaRoute = createRoute({
+  method: 'post',
+  path: '/mfa/verify',
+  security: [{ Bearer: [] }],
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            factorId: z.string(),
+            code: z.string()
+          })
+        }
+      }, required: true
+    }
   },
-});
+  responses: { 200: { description: 'Factor verificado' } }
+})
+authRoutes.openapi(verifyMfaRoute, async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+  const { factorId, code } = c.req.valid('json')
+  const resp = await userService.verifyMFA(token, factorId, code)
+  return c.json(resp)
+})
 
 authRoutes.openapi(enrollMfaRoute, async (c) => {
-  const { data, error } = await userService.enrollMfa();
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+
+  const { data, error } = await userService.enrollMfa(token);
   if (error) return c.json({ success: false, error: error.message }, 400);
 
   // Supabase MFA enroll returns `data.totp.qr_code` (and `.uri`) inside the response
   return c.json({ success: true, qr_code: data?.totp?.qr_code ?? data?.totp?.uri, factor_id: data?.id });
 });
 
-// 2. Verify MFA
-const verifyMfaRoute = createRoute({
-  method: 'post',
-  path: '/mfa/verify',
-  security: [{ Bearer: [] }],
-  request: { body: { content: { 'application/json': { schema: z.object({ factor_id: z.string(), code: z.string() }) } } } },
-  responses: { 200: { description: 'MFA activada correctamente' }, 400: { description: 'Código inválido' } },
-});
-
 authRoutes.openapi(verifyMfaRoute, async (c) => {
-  const { factor_id, code } = c.req.valid('json');
-  const { data, error } = await userService.verifyMFA(factor_id, code);
+  const { factorId, code } = c.req.valid('json');
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+
+  const { data, error } = await userService.verifyMFA(token, factorId, code);
   if (error) return c.json({ success: false, error: (error as any)?.message ?? 'MFA verification failed' }, 400);
 
   return c.json({ success: true, message: 'MFA activada correctamente', data });
 });
 
-// 3. Challenge MFA al login
-const loginMfaRoute = createRoute({
-  method: 'post',
-  path: '/mfa/challenge',
-  request: { body: { content: { 'application/json': { schema: z.object({ factor_id: z.string(), code: z.string() }) } } } },
-  responses: { 200: { description: 'Login completado' }, 400: { description: 'Código incorrecto' } },
-});
-
-authRoutes.openapi(loginMfaRoute, async (c) => {
-  const { factor_id, code } = c.req.valid('json');
-  const { data, error } = await userService.verifyMFA(factor_id, code);
-  if (error) return c.json({ success: false, error: error.message }, 400);
-
-  /**
-   * export type AuthMFAVerifyResponse =
-     | {
-         data: {
-           access_token: string
-   
-           token_type: string
-   
-           expires_in: number
-   
-           refresh_token: string
-   
-           user: User
-         }
-         error: null
-       }
-     | {
-         data: null
-         error: AuthError
-       }
-   
-   */
-  // Guardar sesión en cookie y Redis
-  const sessionCookie = createSessionCookie(data.access_token);
-  const refreshCookie = clearCookie('sb_refresh_token', '/auth'); // o crea uno nuevo según tu flujo
-
-  return c.json({ success: true, session: data }, 200, { 'Set-Cookie': [sessionCookie, refreshCookie] });
-});
 
 export default authRoutes;
