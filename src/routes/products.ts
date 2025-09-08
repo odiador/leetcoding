@@ -65,6 +65,8 @@ const CreateProductKeyData = z.object({
   expiration_date: z.string().optional(),
   activation_limit: z.number().int().optional()
 })
+
+const CreateProductKeyInputData = CreateProductKeyData.omit({ product_id: true })
 // Product Key Endpoints
 const listProductKeysRoute = createRoute({
   method: 'get',
@@ -102,7 +104,7 @@ const createProductKeyRoute = createRoute({
     params: z.object({ productId: z.string() }),
     body: {
       content: {
-        'application/json': { schema: CreateProductKeyData }
+        'application/json': { schema: CreateProductKeyInputData }
       },
       required: true
     }
@@ -181,7 +183,7 @@ const CreateProductData = z.object({
   stock_quantity: z.number().int().min(0)
   // allow creating product with keys
 }).extend({
-  product_keys: z.array(CreateProductKeyData).optional()
+  product_keys: z.array(CreateProductKeyInputData).optional()
 })
 
 const UpdateProductData = CreateProductData.partial()
