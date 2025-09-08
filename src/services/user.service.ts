@@ -1,7 +1,7 @@
 import type { Factor, Session } from '@supabase/supabase-js'
 import { createClient } from '@supabase/supabase-js'
 import { APP_REDIRECT_URL, SUPABASE_ANON_KEY, SUPABASE_URL } from '../config/env.js'
-import { supabase } from '../config/supabase.js'
+import { supabase, supabaseAdmin } from '../config/supabase.js'
 import { redisService } from '../services/redis.service.js'
 import { Context } from 'hono'
 import { issueCsrfCookie } from '../middlewares/csrf.js'
@@ -351,7 +351,7 @@ export async function updateUserProfile(
   profileData: Partial<{ full_name?: string; country?: string; image_file?: any }>,
   accessToken?: string
 ) {
-  // Seleccionar cliente (autenticado si se pasa token)
+  // Cliente para operaciones en tablas (autenticado si hay token)
   let client = supabase
   if (accessToken) {
     client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -365,51 +365,86 @@ export async function updateUserProfile(
   if (full_name) updatePayload.full_name = full_name
   if (country) updatePayload.country = country
 
-  // Manejar subida de imagen si se proporciona
-  if (image_file && image_file.size > 0) {
-    const fileExt = image_file.name.split('.').pop()
-    const fileName = `avatars/${userId}.${fileExt}`
-
-    console.log(image_file);
-
-    const { error: uploadError } = await client.storage
-      .from('images')
-      .upload(fileName, image_file, {
-        cacheControl: '3600',
-        upsert: true, // Sobrescribe si ya existe
-      })
-
-    if (uploadError) {
-      throw new Error(`Failed to upload avatar: ${uploadError.message}`)
+  // Subida de avatar (similar a lógica de productos: soporta File/Buffer o data URL)
+  try {
+    if (image_file) {
+      // Caso data URL (string base64)
+      if (typeof image_file === 'string' && image_file.startsWith('data:')) {
+        const match = image_file.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/)
+        if (match) {
+          const mime = match[1]
+          const b64 = match[2]
+          const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png'
+          const buffer = Buffer.from(b64, 'base64')
+          const fileName = `avatars/${userId}/${Date.now()}.${ext}`
+          const primary = supabaseAdmin ?? client
+          const { error: uploadError } = await primary.storage
+            .from('images')
+            .upload(fileName, buffer, { cacheControl: '3600', upsert: true })
+          if (uploadError) throw uploadError
+          const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
+          const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+          updatePayload.avatar_url = publicUrl
+        }
+      } else if (image_file?.size > 0 || image_file instanceof Buffer) {
+        // Caso File / Buffer (Node o navegador)
+        const namePart = typeof (image_file as any).name === 'string' ? (image_file as any).name : 'avatar.png'
+        const ext = namePart.includes('.') ? namePart.split('.').pop() : 'png'
+        const fileName = `avatars/${userId}/${Date.now()}.${ext}`
+        const storageClient = accessToken ? client : (supabaseAdmin ?? client)
+        const body = image_file instanceof Buffer ? image_file : image_file
+        const { error: uploadError } = await storageClient.storage
+          .from('images')
+          .upload(fileName, body, { cacheControl: '3600', upsert: true })
+        if (uploadError) throw uploadError
+        const publicUrlResult: any = storageClient.storage.from('images').getPublicUrl(fileName)
+        const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+        updatePayload.avatar_url = publicUrl
+      }
     }
-
-    const { data: urlData } = client.storage.from('images').getPublicUrl(fileName)
-    updatePayload.avatar_url = urlData.publicUrl
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to upload avatar', err)
+    let details = ''
+    try {
+      if (err instanceof Error) details = err.message || String(err)
+      else details = JSON.stringify(err)
+    } catch {
+      details = String(err)
+    }
+    throw new Error(`Failed to upload avatar: ${details}`)
   }
 
   if (Object.keys(updatePayload).length === 0) {
-    // No hay nada que actualizar, devolver perfil actual
     const { data: existingProfile, error } = await client
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single()
-    if (error) throw error
+    if (error) throw new Error(`Failed to fetch profile: ${error.message}`)
     return existingProfile
   }
 
-  const { data, error } = await client
-    .from('profiles')
-    .update(updatePayload)
-    .eq('id', userId)
-    .select()
-    .single()
-
-  if (error) {
-    throw new Error(`Failed to update profile: ${error.message}`)
+  const primary = supabaseAdmin ?? client
+  try {
+    const { data, error } = await primary
+      .from('profiles')
+      .update(updatePayload)
+      .eq('id', userId)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  } catch (err) {
+    let details = ''
+    try {
+      if (err instanceof Error) details = err.message || String(err)
+      else details = JSON.stringify(err)
+    } catch { details = String(err) }
+    // eslint-disable-next-line no-console
+    console.error('Failed to update profile', { userId, details })
+    throw new Error(`Failed to update profile: ${details}`)
   }
-
-  return data
 }
 
 // --- Métodos de Manejo de Sesión ---
