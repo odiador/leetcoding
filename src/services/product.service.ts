@@ -114,6 +114,14 @@ export async function getProductWithKeys(id: string) {
 export async function createProduct(productData: CreateProductData): Promise<Product> {
   // Extraer product_keys si vienen
   const { product_keys, ...productFields } = productData as any;
+  // Si frontend envía una imagen como data URL (data:<mime>;base64,...), la guardamos y la subimos
+  const maybeImageDataUrl = typeof productFields.image_url === 'string' && productFields.image_url.startsWith('data:')
+    ? productFields.image_url
+    : null
+  if (maybeImageDataUrl) {
+    // no incluir image_url en el insert inicial; la subiremos después y haremos un update
+    delete productFields.image_url
+  }
   // Envolver la llamada a Supabase para capturar errores de fetch u otros problemas de red
   let product: any = null
   try {
@@ -166,6 +174,37 @@ export async function createProduct(productData: CreateProductData): Promise<Pro
       await createProductKey({ ...keyData, product_id: product.id });
     }
   }
+  // Si recibimos una data URL, subirla ahora que tenemos el product.id y actualizar la fila
+  if (maybeImageDataUrl) {
+    const primary = supabaseAdmin ?? supabase
+    try {
+      const m = maybeImageDataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/)
+      if (m) {
+        const mime = m[1]
+        const b64 = m[2]
+        const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png'
+        const buffer = Buffer.from(b64, 'base64')
+        const fileName = `products/${product.id}/${Date.now()}.${ext}`
+
+        const { data: uploadData, error: uploadError } = await primary.storage
+          .from('images')
+          .upload(fileName, buffer, { cacheControl: '3600', upsert: false })
+
+        if (uploadError) throw uploadError
+
+        const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
+        const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+
+        await primary.from('products').update({ image_url: publicUrl }).eq('id', product.id)
+        // keep local product object consistent
+        try { product.image_url = publicUrl } catch (e) { /* ignore */ }
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to upload image to storage (createProduct)', err)
+      throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
   // Return product with keys attached to keep response consistent
   const productWithKeys = await getProductWithKeys(product.id)
   return productWithKeys ?? product
@@ -178,6 +217,39 @@ export async function updateProduct(id: string, updateData: Partial<CreateProduc
   // Si viene un archivo de imagen en updateData, subirlo al storage de Supabase
   try {
     const maybeFile = (updateData as any)?.image_file
+    const maybeDataUrl = typeof (updateData as any)?.image_url === 'string' && (updateData as any).image_url.startsWith('data:')
+      ? (updateData as any).image_url
+      : null
+
+    // Si frontend envía image as data URL, convertir y subirlo
+    if (maybeDataUrl) {
+      const primary = supabaseAdmin ?? supabase
+      try {
+        const m = maybeDataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/)
+        if (m) {
+          const mime = m[1]
+          const b64 = m[2]
+          const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png'
+          const buffer = Buffer.from(b64, 'base64')
+          const fileName = `products/${id}/${Date.now()}.${ext}`
+
+          const { data: uploadData, error: uploadError } = await primary.storage
+            .from('images')
+            .upload(fileName, buffer, { cacheControl: '3600', upsert: false })
+
+          if (uploadError) throw uploadError
+
+          const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
+          const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+          ;(updateData as any).image_url = publicUrl
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to upload image to storage (updateProduct dataURL)', err)
+        throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
     if (maybeFile) {
       // Generar key/filename único
       const timestamp = Date.now()
