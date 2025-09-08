@@ -342,6 +342,74 @@ export async function updateUser(
   return user as UserProfile
 }
 
+/**
+ * Actualizar el perfil de usuario, incluyendo la subida de avatar
+ * Opcionalmente recibe un accessToken para usar un cliente autenticado
+ */
+export async function updateUserProfile(
+  userId: string,
+  profileData: Partial<{ full_name?: string; country?: string; image_file?: any }>,
+  accessToken?: string
+) {
+  // Seleccionar cliente (autenticado si se pasa token)
+  let client = supabase
+  if (accessToken) {
+    client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    })
+  }
+
+  const { full_name, country, image_file } = profileData
+  const updatePayload: { [key: string]: any } = {}
+
+  if (full_name) updatePayload.full_name = full_name
+  if (country) updatePayload.country = country
+
+  // Manejar subida de imagen si se proporciona
+  if (image_file && image_file.size > 0) {
+    const fileExt = image_file.name.split('.').pop()
+    const fileName = `avatars/${userId}.${fileExt}`
+
+    const { error: uploadError } = await client.storage
+      .from('images')
+      .upload(fileName, image_file, {
+        cacheControl: '3600',
+        upsert: true, // Sobrescribe si ya existe
+      })
+
+    if (uploadError) {
+      throw new Error(`Failed to upload avatar: ${uploadError.message}`)
+    }
+
+    const { data: urlData } = client.storage.from('images').getPublicUrl(fileName)
+    updatePayload.avatar_url = urlData.publicUrl
+  }
+
+  if (Object.keys(updatePayload).length === 0) {
+    // No hay nada que actualizar, devolver perfil actual
+    const { data: existingProfile, error } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+    if (error) throw error
+    return existingProfile
+  }
+
+  const { data, error } = await client
+    .from('profiles')
+    .update(updatePayload)
+    .eq('id', userId)
+    .select()
+    .single()
+
+  if (error) {
+    throw new Error(`Failed to update profile: ${error.message}`)
+  }
+
+  return data
+}
+
 // --- Métodos de Manejo de Sesión ---
 
 /**

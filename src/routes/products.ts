@@ -21,7 +21,7 @@ const ProductKey = z.object({
 const CreateProductKeyData = z.object({
   product_id: z.string(),
   license_key: z.string(),
-  user_id: z.string().uuid().optional(),
+  user_id: z.uuid().optional(),
   status: z.string().optional(),
   expiration_date: z.string().optional(),
   activation_limit: z.number().int().optional()
@@ -126,7 +126,7 @@ const Product = z.object({
   description: z.string(),
   price: z.number().positive(),
   category: z.string(),
-  image_url: z.string().url().optional(),
+  imagen: z.string().url().optional(),
   stock_quantity: z.number().int().min(0),
   created_at: z.string(),
   updated_at: z.string(),
@@ -138,7 +138,7 @@ const CreateProductData = z.object({
   description: z.string().min(1),
   price: z.number().positive(),
   category: z.string().min(1),
-  image_url: z.string().url().optional(),
+  imagen: z.string().url().optional(),
   stock_quantity: z.number().int().min(0)
   // allow creating product with keys
 }).extend({
@@ -345,7 +345,7 @@ const updateProductRoute = createRoute({
     }),
     body: {
       content: {
-        'application/json': {
+        'multipart/form-data': {
           schema: UpdateProductData
         }
       },
@@ -370,7 +370,22 @@ const updateProductRoute = createRoute({
 productRoutes.openapi(updateProductRoute, async (c) => {
   try {
   const { id } = c.req.valid('param')
-  const updateData = c.req.valid('json')
+  const body = await c.req.parseBody()
+
+    const updateData: { [key: string]: any } = {}
+    for (const key in body) {
+      if (body[key] !== undefined) {
+        updateData[key] = body[key]
+      }
+    }
+
+    // Hono parsea los números como strings, hay que convertirlos
+    if (updateData.price) {
+      updateData.price = parseFloat(updateData.price)
+    }
+    if (updateData.stock_quantity) {
+      updateData.stock_quantity = parseInt(updateData.stock_quantity, 10)
+    }
 
     const product = await productService.updateProduct(id, updateData)
 
