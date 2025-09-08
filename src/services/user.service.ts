@@ -14,6 +14,7 @@ export interface UserProfile {
   full_name: string
   email: string
   role: string
+  image?: string
   country?: string
   created_at?: string
   updated_at?: string
@@ -295,7 +296,7 @@ export async function getUserById(userId: string, accessToken?: string): Promise
 
   const { data: profile, error } = await client
     .from('profiles')
-    .select('id, email, full_name, role, created_at, updated_at')
+    .select('id, email, full_name, role, image, created_at, updated_at')
     .eq('id', userId)
     .single()
 

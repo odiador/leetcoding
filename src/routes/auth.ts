@@ -36,6 +36,7 @@ const UserResponseSchema = z.object({
   email: z.email(),
   full_name: z.string(),
   role: z.string(),
+  image: z.string().url().optional(),
 })
 
 const LoginResponseSchema = z.object({
