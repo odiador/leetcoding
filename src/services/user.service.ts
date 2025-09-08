@@ -370,6 +370,8 @@ export async function updateUserProfile(
     const fileExt = image_file.name.split('.').pop()
     const fileName = `avatars/${userId}.${fileExt}`
 
+    console.log(image_file);
+
     const { error: uploadError } = await client.storage
       .from('images')
       .upload(fileName, image_file, {
