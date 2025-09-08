@@ -29,3 +29,4 @@ console.log('=== CLIENTS DEBUG ===')
 console.log('supabase created:', !!supabase)
 console.log('supabaseAdmin created:', !!supabaseAdmin)
 console.log('=====================')
+
