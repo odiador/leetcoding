@@ -22,53 +22,24 @@ export interface CreateProductKeyData {
 }
 
 export async function listProductKeys(product_id?: string): Promise<ProductKey[]> {
-  // DEBUG: Verificar configuración
-  console.log('=== PRODUCT KEYS DEBUG ===')
-  console.log('supabaseAdmin exists:', !!supabaseAdmin)
-  console.log('Using client:', supabaseAdmin ? 'supabaseAdmin' : 'supabase')
-  // Test conexión antes de la consulta
-  try {
-    console.log('Testing schema access...')
-    const testQuery = (supabaseAdmin ?? supabase)
-      .from('product_keys')
-      .select('count(*)')
-      .limit(1)
-    const { data: testData, error: testError } = await testQuery
-    console.log('Schema test result:', { testData, testError })
-    if (testError) {
-      console.log('Error details:', {
-        message: testError.message,
-        code: testError.code,
-        details: testError.details,
-        hint: testError.hint
-      })
-    }
-  } catch (err) {
-    if (err && typeof err === 'object' && 'message' in err) {
-      console.log('Test query failed:', (err as any).message)
-    } else {
-      console.log('Test query failed:', err)
-    }
-  }
-  // Consulta principal
-  console.log('Executing main query...')
-  let query = (supabaseAdmin ?? supabase).from('product_keys').select('*')
+  // Use the configured Supabase client (admin if available) to fetch keys.
+  const db = supabaseAdmin ?? supabase
+
+  let query = db.from('product_keys').select('*')
   if (product_id) {
-    console.log('Filtering by product_id:', product_id)
     query = query.eq('product_id', product_id)
   }
+
   const { data, error } = await query
-  console.log('Main query result:', { 
-    dataLength: data?.length, 
-    error: error ? {
-      message: error.message,
-      code: error.code,
-      details: error.details
-    } : null
-  })
-  console.log('========================')
-  if (error) throw new Error(`Failed to fetch product keys: ${error.message}`)
-  return data || []
+
+  if (error) {
+    // Return empty array on error and log for debugging
+    // eslint-disable-next-line no-console
+    console.error('Failed to list product keys:', error)
+    return []
+  }
+
+  return (data || []) as ProductKey[]
 }
 export async function createProductKey(data: CreateProductKeyData): Promise<ProductKey> {
   const { data: key, error } = await (supabaseAdmin ?? supabase)

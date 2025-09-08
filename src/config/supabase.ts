@@ -11,10 +11,14 @@ console.log('SERVICE_ROLE_KEY length:', SUPABASE_SERVICE_ROLE_KEY?.length)
 console.log('SERVICE_ROLE_KEY starts with eyJ:', SUPABASE_SERVICE_ROLE_KEY?.startsWith('eyJ'))
 console.log('============================')
 
+// Runtime diagnostics
+console.log('Node version:', process.version)
+console.log('globalThis.fetch available:', typeof globalThis.fetch !== 'undefined')
+
 // Create Supabase client for client-side operations
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// Create Supabase client for server-side operations (with service role)
+// En tu supabase.ts - versión más explícita
 export const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: {
@@ -24,9 +28,5 @@ export const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
     })
   : null
 
-// DEBUG: Verificar clientes creados
-console.log('=== CLIENTS DEBUG ===')
-console.log('supabase created:', !!supabase)
-console.log('supabaseAdmin created:', !!supabaseAdmin)
-console.log('=====================')
-
+// Debug: Imprimir las primeros caracteres de tu clave
+console.log('SERVICE_ROLE_KEY first 10 chars:', SUPABASE_SERVICE_ROLE_KEY?.substring(0, 10))

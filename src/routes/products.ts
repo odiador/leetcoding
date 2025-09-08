@@ -6,7 +6,7 @@ const productRoutes = new OpenAPIHono()
 
 // Schemas
 const ProductKey = z.object({
-  id: z.string().uuid(),
+  id: z.string(),
   product_id: z.string(),
   license_key: z.string(),
   user_id: z.string().uuid().optional(),
@@ -120,7 +120,7 @@ productRoutes.openapi(deleteProductKeyRoute, async (c) => {
   }
 })
 const Product = z.object({
-  id: z.string().uuid(),
+  id: z.string(),
   name: z.string(),
   description: z.string(),
   price: z.number().positive(),
@@ -128,7 +128,8 @@ const Product = z.object({
   image_url: z.string().url().optional(),
   stock_quantity: z.number().int().min(0),
   created_at: z.string(),
-  updated_at: z.string()
+  updated_at: z.string(),
+  product_keys: z.array(ProductKey).optional()
 })
 
 const CreateProductData = z.object({
@@ -138,6 +139,9 @@ const CreateProductData = z.object({
   category: z.string().min(1),
   image_url: z.string().url().optional(),
   stock_quantity: z.number().int().min(0)
+  // allow creating product with keys
+}).extend({
+  product_keys: z.array(CreateProductKeyData).optional()
 })
 
 const UpdateProductData = CreateProductData.partial()
@@ -235,7 +239,7 @@ const getProductRoute = createRoute({
   path: '/:id',
   request: {
     params: z.object({
-      id: z.string().uuid()
+      id: z.string()
     })
   },
   responses: {
@@ -260,7 +264,7 @@ productRoutes.openapi(getProductRoute, async (c) => {
   try {
   const { id } = c.req.valid('param')
 
-    const product = await productService.getProductById(id)
+  const product = await productService.getProductWithKeys(id)
 
     if (!product) {
       return c.json({
@@ -336,7 +340,7 @@ const updateProductRoute = createRoute({
   path: '/:id',
   request: {
     params: z.object({
-      id: z.string().uuid()
+      id: z.string()
     }),
     body: {
       content: {
@@ -388,7 +392,7 @@ const deleteProductRoute = createRoute({
   path: '/:id',
   request: {
     params: z.object({
-      id: z.string().uuid()
+      id: z.string()
     })
   },
   responses: {
