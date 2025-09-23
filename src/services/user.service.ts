@@ -47,7 +47,7 @@ export interface UserProfile {
  * @param {string} email - Correo electrónico del usuario
  * @param {string} password - Contraseña del usuario
  * @param {object} metadata - Metadatos adicionales del usuario
- * @param {string} metadata.full_name - Nombre completo del usuario
+ * @param {string} [metadata.full_name] - Nombre completo del usuario
  * @param {string} [metadata.country] - País de residencia (opcional)
  * @param {string} [metadata.role='cliente'] - Rol del usuario (opcional, por defecto 'cliente')
  * @returns {Promise<{data: any, error: any}>} Resultado del registro
@@ -57,7 +57,7 @@ export async function signupWithEmail(
   email: string,
   password: string,
   metadata: {
-    full_name: string
+    full_name?: string
     country?: string
     role?: string
   }
@@ -67,7 +67,7 @@ export async function signupWithEmail(
     password,
     options: {
       data: {
-        full_name: metadata.full_name,
+        full_name: metadata.full_name ?? email.split('@')[0],
         country: metadata.country ?? null,
         role: metadata.role ?? 'cliente',
       },

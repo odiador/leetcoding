@@ -66,8 +66,9 @@ const SignupSchema = z.object({
     .min(8, 'La contraseña debe tener al menos 8 caracteres')
     .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*(),.?":{}|<>]).*$/,
       'La contraseña debe contener al menos una minúscula, una mayúscula y un carácter especial'),
-  full_name: z.string().min(2, 'El nombre completo es requerido'),
+  full_name: z.string().min(2, 'El nombre completo es requerido').optional(),
   country: z.string().optional(),
+  rememberMe: z.boolean().optional(),
 })
 
 const UserResponseSchema = z.object({
@@ -152,42 +153,54 @@ const createSessionCookie = (accessToken: string): string => {
 // 🚀 1. Signup
 const signupRoute = createRoute({
   method: 'post',
-  path: '/signup',
-  request: { body: { content: { 'application/json': { schema: SignupSchema } }, required: true } },
+  path: '/register',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: SignupSchema,
+        },
+      },
+    },
+  },
   responses: {
-    201: { description: 'Usuario creado', content: { 'application/json': { schema: z.object({ success: z.boolean(), data: UserResponseSchema }) } } },
-    400: { description: 'Error en la petición' },
-    409: { description: 'El correo ya está en uso' }
-  }
+    201: {
+      description: 'Usuario registrado exitosamente',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.boolean(),
+            data: z.any(),
+          }),
+        },
+      },
+    },
+    400: {
+      description: 'Error de validación o registro',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.boolean(),
+            error: z.string(),
+          }),
+        },
+      },
+    },
+  },
 })
 
 authRoutes.openapi(signupRoute, async (c) => {
+  const body = c.req.valid('json')
+  const { email, password, full_name, country } = body
+
   try {
-    const body = c.req.valid('json');
-    const { data, error } = await userService.signupWithEmail(body.email, body.password, body);
-
-    // Manejo robusto de error: Supabase devuelve un objeto error, no siempre una instancia de Error
-    if (error) {
-      const msg = (error as any)?.message ?? JSON.stringify(error);
-      if (typeof msg === 'string' && msg.includes('already registered')) {
-        return c.json({ success: false, error: 'Este correo ya está en uso' }, 409);
-      }
-      return c.json({ success: false, error: msg }, 400);
-    }
-
-    if (!data || !data.user) {
-      return c.json({ success: false, error: 'No se pudo crear el usuario' }, 400);
-    }
-
-    return c.json({
-      success: true,
-      data: data
-    }, 201);
-  } catch (err) {
-    return c.json({ success: false, error: (err as Error).message }, 400);
+    const { data } = await userService.signupWithEmail(email, password, { full_name, country });
+    return c.json({ success: true, data }, 201)
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return c.json({ success: false, error: errorMessage }, 400)
   }
-});
-
+})
 
 // 🚀 2. Login (Email/Password)
 const loginRoute = createRoute({
@@ -488,11 +501,37 @@ const verifyMfaRoute = createRoute({
   responses: { 200: { description: 'Factor verificado' } }
 })
 authRoutes.openapi(verifyMfaRoute, async (c) => {
-  const token = getTokenFromRequest(c)
-  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
   const { factorId, code } = c.req.valid('json')
-  const resp = await userService.verifyMFA(token, factorId, code)
-  return c.json(resp)
+  const token = getTokenFromRequest(c)
+
+  if (!token) {
+    return c.json({ success: false, error: 'No autorizado' }, 401)
+  }
+
+  try {
+    const { data, error } = await userService.verifyMFA(factorId, code, token)
+
+    if (error) {
+      return c.json({ success: false, error: error.message }, 401)
+    }
+
+    // Si la verificación es exitosa, la sesión se actualiza.
+    // Devolvemos una cookie de sesión actualizada.
+    if (data) {
+      const sessionCookie = createSessionCookie(data.access_token)
+      const origin = c.req.header('Origin') || ''
+      return c.json({ success: true }, 200, {
+        'Set-Cookie': sessionCookie,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Origin': origin,
+      })
+    }
+    
+    return c.json({ success: false, error: 'No se pudo verificar el factor MFA.' }, 400);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Error inesperado'
+    return c.json({ success: false, error: errorMessage }, 500)
+  }
 })
 
 authRoutes.openapi(enrollMfaRoute, async (c) => {
