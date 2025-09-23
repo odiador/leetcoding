@@ -264,43 +264,56 @@ export async function updateProduct(id: string, updateData: Partial<CreateProduc
   const primary = supabaseAdmin ?? supabase
   const fallback = supabaseAdmin ? supabase : supabaseAdmin
 
-  // Si viene un archivo de imagen en updateData, subirlo al storage de Supabase
-  try {
-    const maybeFile = (updateData as any)?.image_file
-    const maybeDataUrl = typeof (updateData as any)?.image_url === 'string' && (updateData as any).image_url.startsWith('data:')
-      ? (updateData as any).image_url
-      : null
 
-    // Si frontend envía image as data URL, convertir y subirlo
-    if (maybeDataUrl) {
-      const primary = supabaseAdmin ?? supabase
-      try {
-        const m = maybeDataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/)
-        if (m) {
-          const mime = m[1]
-          const b64 = m[2]
-          const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png'
-          const buffer = Buffer.from(b64, 'base64')
-          const fileName = `products/${id}/${Date.now()}.${ext}`
+  // Handle image upload if present in updateData
+  const maybeFile = (updateData as any)?.image_file
+  const maybeDataUrl = typeof (updateData as any)?.image_url === 'string' && (updateData as any).image_url.startsWith('data:')
+    ? (updateData as any).image_url
+    : null
 
-          const { data: uploadData, error: uploadError } = await primary.storage
-            .from('images')
-            .upload(fileName, buffer, { cacheControl: '3600', upsert: false })
 
-          if (uploadError) throw uploadError
+  // Si frontend envía image as data URL, convertir y subirlo
+  if (maybeDataUrl) {
+    console.log('📤 Processing data URL upload...')
+    try {
+      const m = maybeDataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/)
+      if (m) {
+        const mime = m[1]
+        const b64 = m[2]
+        const ext = mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png'
+        const buffer = Buffer.from(b64, 'base64')
+        const fileName = `products/${id}/${Date.now()}.${ext}`
 
-          const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
-          const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
-          ;(updateData as any).image_url = publicUrl
+        const { data: uploadData, error: uploadError } = await primary.storage
+          .from('images')
+          .upload(fileName, buffer, { cacheControl: '3600', upsert: false })
+
+        if (uploadError) {
+          console.error('❌ Upload error:', uploadError)
+          throw uploadError
         }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to upload image to storage (updateProduct dataURL)', err)
-        throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
-      }
-    }
 
-    if (maybeFile) {
+        const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
+        const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+
+
+        if (!publicUrl) {
+          throw new Error('Failed to generate public URL for uploaded image')
+        }
+
+        ; (updateData as any).image_url = publicUrl
+      } else {
+        console.error('❌ Failed to parse data URL')
+        throw new Error('Invalid data URL format')
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  if (maybeFile) {
+    try {
       // Generar key/filename único
       const timestamp = Date.now()
       const extension = typeof (maybeFile as any).name === 'string'
@@ -317,31 +330,50 @@ export async function updateProduct(id: string, updateData: Partial<CreateProduc
         .upload(fileName, fileBody, { cacheControl: '3600', upsert: false })
 
       if (uploadError) {
+        console.error('❌ File upload error:', uploadError)
         throw uploadError
       }
 
-  // Obtener URL pública del archivo subido
-  // Manejar distintos shapes de retorno entre versiones del SDK
-  const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
-  const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
-  ;(updateData as any).image_url = publicUrl
+
+      // Obtener URL pública del archivo subido
+      // Manejar distintos shapes de retorno entre versiones del SDK
+      const publicUrlResult: any = primary.storage.from('images').getPublicUrl(fileName)
+      const publicUrl = (publicUrlResult && publicUrlResult.data && (publicUrlResult.data.publicUrl || publicUrlResult.data.public_url)) || publicUrlResult?.publicURL || publicUrlResult?.publicUrl
+
+      console.log('🌐 Generated public URL for file:', publicUrl)
+
+      if (!publicUrl) {
+        throw new Error('Failed to generate public URL for uploaded file')
+      }
+
+      ; (updateData as any).image_url = publicUrl
+      console.log('✅ Updated image_url in updateData (file):', publicUrl)
 
       // Eliminar campo image_file para que no se intente guardar en la tabla
       delete (updateData as any).image_file
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('❌ Failed to upload file to storage', err)
+      throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
     }
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to upload image to storage', err)
-    throw new Error(`Failed to upload image: ${err instanceof Error ? err.message : String(err)}`)
   }
 
+  // Clean up updateData before database update
+  delete (updateData as any).image_file
+
+  console.log('💾 Final updateData before database update:', JSON.stringify(updateData, null, 2))
+
   async function runUpdate(dbClient: any) {
+    console.log('🔄 Running database update for product:', id)
+    const updatePayload = {
+      ...updateData,
+      updated_at: new Date().toISOString()
+    }
+    console.log('📝 Update payload:', JSON.stringify(updatePayload, null, 2))
+
     return dbClient
       .from('products')
-      .update({
-        ...updateData,
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq('id', id)
       .select()
       .single()
