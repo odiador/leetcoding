@@ -216,14 +216,26 @@ const loginRoute = createRoute({
 authRoutes.openapi(loginRoute, async (c) => {
   try {
     const body = c.req.valid('json');
-    const { session } = await userService.loginWithEmail(body.email, body.password);
+    const result = await userService.loginWithEmail(body.email, body.password);
 
-    if (!session) throw new Error('No se pudo iniciar sesión');
+    if (!result.session) throw new Error('No se pudo iniciar sesión');
 
-    const sessionCookie = createSessionCookie(session.access_token);
+    // Si requiere MFA, devolver respuesta especial sin cookies de sesión completa
+    if (result.mfaRequired) {
+      return c.json({
+        success: true,
+        mfaRequired: true,
+        factorId: result.factorId,
+        // Devolver un token temporal para completar la verificación MFA
+        tempToken: result.session.access_token
+      }, 200);
+    }
+
+    // Login completo sin MFA
+    const sessionCookie = createSessionCookie(result.session.access_token);
     const isProduction = process.env.NODE_ENV === 'production'
     const refreshCookie = [
-      `sb_refresh_token=${session.refresh_token}`,
+      `sb_refresh_token=${result.session.refresh_token}`,
       `HttpOnly`,
       `Path=/auth`,
       `Max-Age=${60 * 60 * 24 * (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7)}`,
@@ -243,7 +255,7 @@ authRoutes.openapi(loginRoute, async (c) => {
 
     return c.json({
       success: true,
-      session: session
+      session: result.session
     }, 200, {
       'Set-Cookie': [sessionCookie, refreshCookie, clearAccessAuth],
       'Access-Control-Allow-Credentials': 'true',
@@ -468,6 +480,9 @@ authRoutes.openapi(refreshRoute, async (c) => {
 
 
 
+// 🔐 MFA Routes
+
+// Enroll MFA (configurar por primera vez)
 const enrollMfaRoute = createRoute({
   method: 'post',
   path: '/mfa/enroll',
@@ -478,13 +493,20 @@ authRoutes.openapi(enrollMfaRoute, async (c) => {
   const token = getTokenFromRequest(c)
   if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
   const resp = await userService.enrollMfa(token)
-  if (resp.error) return c.json({ success: false, error: resp.error }, 400)
-  return c.json({ ok: true, factorId: resp.data.id, uri: resp.data.totp.uri })
+  if (resp.error) return c.json({ success: false, error: resp.error.message }, 400)
+  return c.json({ 
+    success: true, 
+    factorId: resp.data.id, 
+    qrCode: resp.data.totp.qr_code,
+    secret: resp.data.totp.secret,
+    uri: resp.data.totp.uri 
+  })
 })
 
-const verifyMfaRoute = createRoute({
+// Verify MFA durante configuración inicial
+const verifyMfaSetupRoute = createRoute({
   method: 'post',
-  path: '/mfa/verify',
+  path: '/mfa/verify-setup',
   security: [{ Bearer: [] }],
   request: {
     body: {
@@ -498,63 +520,143 @@ const verifyMfaRoute = createRoute({
       }, required: true
     }
   },
-  responses: { 200: { description: 'Factor verificado' } }
+  responses: { 200: { description: 'Factor verificado y activado' } }
 })
-authRoutes.openapi(verifyMfaRoute, async (c) => {
+authRoutes.openapi(verifyMfaSetupRoute, async (c) => {
   const { factorId, code } = c.req.valid('json')
   const token = getTokenFromRequest(c)
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
 
-  if (!token) {
-    return c.json({ success: false, error: 'No autorizado' }, 401)
-  }
+  const { data, error } = await userService.verifyMFA(token, factorId, code)
+  if (error) return c.json({ success: false, error: error.message }, 400)
+
+  return c.json({ success: true, message: 'MFA activado correctamente' })
+})
+
+// Verify MFA durante login (completar autenticación)
+const verifyMfaLoginRoute = createRoute({
+  method: 'post',
+  path: '/mfa/verify-login',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            factorId: z.string(),
+            code: z.string(),
+            tempToken: z.string()
+          })
+        }
+      }, required: true
+    }
+  },
+  responses: { 200: { description: 'Login completado después de MFA' } }
+})
+authRoutes.openapi(verifyMfaLoginRoute, async (c) => {
+  const { factorId, code, tempToken } = c.req.valid('json')
 
   try {
-    const { data, error } = await userService.verifyMFA(factorId, code, token)
+    // Verificar el código MFA
+    const { data, error } = await userService.verifyMFA(tempToken, factorId, code)
+    if (error) return c.json({ success: false, error: error.message }, 401)
 
-    if (error) {
-      return c.json({ success: false, error: error.message }, 401)
+    // Decodificar el token para obtener información de sesión
+    const decoded = jwt.decode(tempToken) as any
+    if (!decoded) throw new Error('Invalid token')
+
+    // Obtener la sesión actualizada después de verificar MFA
+    const client = userService.createSupabaseClient(tempToken)
+    const { data: sessionData, error: sessionError } = await client.auth.getSession()
+    if (sessionError || !sessionData.session) {
+      throw new Error('Could not get updated session')
     }
 
-    // Si la verificación es exitosa, la sesión se actualiza.
-    // Devolvemos una cookie de sesión actualizada.
-    if (data) {
-      const sessionCookie = createSessionCookie(data.access_token)
-      const origin = c.req.header('Origin') || ''
-      return c.json({ success: true }, 200, {
-        'Set-Cookie': sessionCookie,
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Origin': origin,
-      })
-    }
-    
-    return c.json({ success: false, error: 'No se pudo verificar el factor MFA.' }, 400);
+    // Completar el login en Redis
+    await userService.completeMFALogin(
+      sessionData.session.access_token,
+      sessionData.session.refresh_token,
+      sessionData.session.user.id,
+      sessionData.session.expires_in || 3600
+    )
+
+    // Crear cookies de sesión
+    const sessionCookie = createSessionCookie(sessionData.session.access_token)
+    const isProduction = process.env.NODE_ENV === 'production'
+    const refreshCookie = [
+      `sb_refresh_token=${sessionData.session.refresh_token}`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=${60 * 60 * 24 * (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7)}`,
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+    const clearAccessAuth = [
+      `sb_access_token=;`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=0`,
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+    const origin = c.req.header('Origin') || ''
+
+    return c.json({
+      success: true,
+      session: sessionData.session
+    }, 200, {
+      'Set-Cookie': [sessionCookie, refreshCookie, clearAccessAuth],
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Origin': origin,
+    })
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Error inesperado'
     return c.json({ success: false, error: errorMessage }, 500)
   }
 })
 
-authRoutes.openapi(enrollMfaRoute, async (c) => {
-  const token = c.req.header('Authorization')?.replace('Bearer ', '')
-  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
-
-  const { data, error } = await userService.enrollMfa(token);
-  if (error) return c.json({ success: false, error: error.message }, 400);
-
-  // Supabase MFA enroll returns `data.totp.qr_code` (and `.uri`) inside the response
-  return c.json({ success: true, qr_code: data?.totp?.qr_code ?? data?.totp?.uri, factor_id: data?.id });
-});
-
-authRoutes.openapi(verifyMfaRoute, async (c) => {
-  const { factorId, code } = c.req.valid('json');
+// Unenroll MFA (desactivar)
+const unenrollMfaRoute = createRoute({
+  method: 'delete',
+  path: '/mfa/unenroll',
+  security: [{ Bearer: [] }],
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            factorId: z.string()
+          })
+        }
+      }, required: true
+    }
+  },
+  responses: { 200: { description: 'Factor MFA eliminado' } }
+})
+authRoutes.openapi(unenrollMfaRoute, async (c) => {
+  const { factorId } = c.req.valid('json')
   const token = getTokenFromRequest(c)
   if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
 
-  const { data, error } = await userService.verifyMFA(token, factorId, code);
-  if (error) return c.json({ success: false, error: (error as any)?.message ?? 'MFA verification failed' }, 400);
+  const { data, error } = await userService.unenrollMFA(token, factorId)
+  if (error) return c.json({ success: false, error: error.message }, 400)
 
-  return c.json({ success: true, message: 'MFA activada correctamente', data });
-});
+  return c.json({ success: true, message: 'MFA desactivado correctamente' })
+})
 
+// List MFA factors
+const listMfaRoute = createRoute({
+  method: 'get',
+  path: '/mfa/factors',
+  security: [{ Bearer: [] }],
+  responses: { 200: { description: 'Lista de factores MFA' } }
+})
+authRoutes.openapi(listMfaRoute, async (c) => {
+  const token = getTokenFromRequest(c)
+  if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
 
+  const { data, error } = await userService.listMFAFactors(token)
+  if (error) return c.json({ success: false, error: error.message }, 400)
+
+  return c.json({ success: true, factors: data.all })
+})
 export default authRoutes;

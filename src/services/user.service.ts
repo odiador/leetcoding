@@ -89,10 +89,11 @@ export async function signupWithEmail(
 /**
  * Inicia sesión de un usuario usando email y contraseña.
  * Valida las credenciales con Supabase y guarda la sesión en Redis con TTL.
+ * Si el usuario tiene MFA habilitado, devuelve un estado especial sin completar la sesión.
  *
  * @param {string} email - Correo electrónico del usuario
  * @param {string} password - Contraseña del usuario
- * @returns {Promise<{user: any, session: any}>} Usuario y sesión de Supabase
+ * @returns {Promise<{user: any, session: any, mfaRequired?: boolean, factorId?: string}>} Usuario y sesión de Supabase
  * @throws {Error} Si las credenciales son inválidas o hay error en el login
  */
 export async function loginWithEmail(email: string, password: string) {
@@ -107,7 +108,29 @@ export async function loginWithEmail(email: string, password: string) {
 
   const { access_token, refresh_token, expires_in, user } = data.session
 
-  // Guardar sesión en Redis con TTL
+  // Verificar si el usuario tiene MFA habilitado
+  const client = createSupabaseClient(access_token)
+  const { data: aalData } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+  
+  // Verificar si tiene factores MFA verificados
+  const { data: factorsData } = await client.auth.mfa.listFactors()
+  const verifiedFactors = factorsData?.all?.filter((f: Factor) => f.status === 'verified') || []
+
+  // Si tiene MFA verificado pero el nivel actual es AAL1, requiere verificación adicional
+  if (verifiedFactors.length > 0 && aalData?.currentLevel === 'aal1') {
+    // No guardar la sesión completa en Redis aún
+    // Guardar una sesión temporal con prefijo "mfa_pending:"
+    await redisService.set(`mfa_pending:${access_token}`, user.id, 300) // 5 minutos para completar MFA
+
+    return {
+      user: data.user,
+      session: data.session,
+      mfaRequired: true,
+      factorId: verifiedFactors[0].id,
+    }
+  }
+
+  // Login completo sin MFA o MFA ya verificado
   await redisService.set(`session:${access_token}`, user.id, expires_in)
   // Guardar refresh token en Redis para validación y rotación (TTL en días)
   const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
@@ -116,6 +139,7 @@ export async function loginWithEmail(email: string, password: string) {
   return {
     user: data.user,
     session: data.session,
+    mfaRequired: false,
   }
 }
 
@@ -599,4 +623,65 @@ export const verifyMFA = async (
   })
 
   return { data: verified, error: verifyError }
+}
+
+/**
+ * Unenroll (eliminar) un factor MFA del usuario
+ */
+export const unenrollMFA = async (accessToken: string, factorId: string) => {
+  const client = createSupabaseClient(accessToken)
+
+  const { data, error } = await client.auth.mfa.unenroll({ factorId })
+  if (error) return { data: null, error }
+
+  return { data, error: null }
+}
+
+/**
+ * Listar todos los factores MFA del usuario
+ */
+export const listMFAFactors = async (accessToken: string) => {
+  const client = createSupabaseClient(accessToken)
+
+  const { data, error } = await client.auth.mfa.listFactors()
+  if (error) return { data: null, error }
+
+  return { data, error: null }
+}
+
+/**
+ * Obtener el nivel de autenticación del usuario (AAL1 o AAL2)
+ * AAL2 significa que el usuario completó MFA
+ */
+export const getAuthenticatorAssuranceLevel = async (accessToken: string) => {
+  const client = createSupabaseClient(accessToken)
+
+  const { data, error } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (error) return { data: null, error }
+
+  return { data, error: null }
+}
+
+/**
+ * Completar el login después de verificar MFA
+ * Mueve la sesión de "mfa_pending" a "session" en Redis
+ */
+export const completeMFALogin = async (accessToken: string, refreshToken: string, userId: string, expiresIn: number) => {
+  // Verificar que exista la sesión pendiente
+  const pendingExists = await redisService.exists(`mfa_pending:${accessToken}`)
+  if (!pendingExists) {
+    throw new Error('No pending MFA session found or session expired')
+  }
+
+  // Eliminar la sesión pendiente
+  await redisService.del(`mfa_pending:${accessToken}`)
+
+  // Guardar la sesión completa
+  await redisService.set(`session:${accessToken}`, userId, expiresIn)
+  
+  // Guardar refresh token
+  const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
+  await redisService.set(`refresh:${refreshToken}`, userId, refreshTtlSeconds)
+
+  return { success: true }
 }
