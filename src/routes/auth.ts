@@ -478,6 +478,116 @@ authRoutes.openapi(refreshRoute, async (c) => {
   }
 })
 
+// 🚀 Establecer sesión desde token (para confirmación de email y recovery)
+const sessionRoute = createRoute({
+  method: 'post',
+  path: '/session',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            access_token: z.string(),
+            refresh_token: z.string().optional()
+          })
+        }
+      }, required: true
+    }
+  },
+  responses: {
+    200: { description: 'Sesión establecida correctamente' },
+    401: { description: 'Token inválido' }
+  }
+})
+
+authRoutes.openapi(sessionRoute, async (c) => {
+  const { access_token, refresh_token } = c.req.valid('json')
+
+  try {
+    // Validar el access_token con Supabase
+    const { data: userData, error: userError } = await userService.getUserByAccessToken(access_token)
+    if (userError || !userData?.user) {
+      console.error('[Session] Token inválido:', userError?.message)
+      return c.json({ success: false, error: 'Token inválido o expirado' }, 401)
+    }
+
+    console.log('[Session] Token validado para usuario:', userData.user.id)
+
+    // Decodificar el token para obtener el expires_in
+    let expiresIn = 3600 // default 1 hora
+    try {
+      const decoded = jwt.decode(access_token) as { exp?: number } | null
+      if (decoded?.exp) {
+        const now = Math.floor(Date.now() / 1000)
+        expiresIn = Math.max(60, decoded.exp - now)
+      }
+    } catch (err) {
+      console.error('[Session] Error decodificando JWT:', err)
+    }
+
+    // Guardar la sesión en Redis
+    const redisService = await import('../services/redis.service.js')
+    await redisService.redisService.set(`session:${access_token}`, userData.user.id, expiresIn)
+    console.log('[Session] Sesión guardada en Redis para usuario:', userData.user.id)
+
+    // Guardar refresh token si está presente
+    if (refresh_token) {
+      const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
+      await redisService.redisService.set(`refresh:${refresh_token}`, userData.user.id, refreshTtlSeconds)
+      console.log('[Session] Refresh token guardado en Redis')
+    }
+
+    // Establecer cookies de sesión
+    const accessCookie = createSessionCookie(access_token)
+    const isProduction = process.env.NODE_ENV === 'production'
+    
+    const cookies = [accessCookie]
+    
+    if (refresh_token) {
+      const refreshCookie = [
+        `sb_refresh_token=${refresh_token}`,
+        `HttpOnly`,
+        `Path=/auth`,
+        `Max-Age=${60 * 60 * 24 * (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7)}`,
+        isProduction ? 'Secure' : '',
+        `SameSite=Lax`
+      ].filter(Boolean).join('; ')
+      cookies.push(refreshCookie)
+    }
+
+    // Limpiar posibles cookies duplicadas
+    const clearAccessAuth = [
+      `sb_access_token=;`,
+      `HttpOnly`,
+      `Path=/auth`,
+      `Max-Age=0`,
+      isProduction ? 'Secure' : '',
+      `SameSite=Lax`
+    ].filter(Boolean).join('; ')
+    cookies.push(clearAccessAuth)
+
+    const csrf = issueCsrfCookie()
+    cookies.push(csrf)
+
+    const origin = c.req.header('Origin') || ''
+    
+    console.log('[Session] ✅ Sesión establecida correctamente')
+    return c.json({ 
+      success: true, 
+      message: 'Sesión establecida correctamente',
+      user: userData.user 
+    }, 200, {
+      'Set-Cookie': cookies,
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Origin': origin,
+    })
+  } catch (err) {
+    console.error('[Session] Error estableciendo sesión:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Error inesperado'
+    return c.json({ success: false, error: errorMessage }, 500)
+  }
+})
+
 
 
 // 🔐 MFA Routes
