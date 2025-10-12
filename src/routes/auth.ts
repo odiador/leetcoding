@@ -668,17 +668,35 @@ authRoutes.openapi(verifyMfaLoginRoute, async (c) => {
   try {
     // Verificar el código MFA
     const { data, error } = await userService.verifyMFA(tempToken, factorId, code)
-    if (error) return c.json({ success: false, error: error.message }, 401)
+
+    if (error) {
+      return c.json({ success: false, error: error.message }, 401)
+    }
 
     // Decodificar el token para obtener información de sesión
     const decoded = jwt.decode(tempToken) as any
-    if (!decoded) throw new Error('Invalid token')
+    if (!decoded) {
+      throw new Error('Invalid token')
+    }
 
-    // Obtener la sesión actualizada después de verificar MFA
-    const client = userService.createSupabaseClient(tempToken)
-    const { data: sessionData, error: sessionError } = await client.auth.getSession()
-    if (sessionError || !sessionData.session) {
-      throw new Error('Could not get updated session')
+    // Validar que todos los campos requeridos estén presentes
+    if (!data?.access_token || !data?.refresh_token || !data?.user?.id) {
+      const missingFields = [];
+      if (!data?.access_token) missingFields.push('access_token');
+      if (!data?.refresh_token) missingFields.push('refresh_token');
+      if (!data?.user?.id) missingFields.push('user.id');
+      
+      throw new Error(`Missing required fields in MFA response: ${missingFields.join(', ')}`);
+    }
+
+    // Usar directamente los datos de la verificación MFA exitosa
+    const sessionData = {
+      session: {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        user: data.user,
+        expires_in: data.expires_in || 3600
+      }
     }
 
     // Completar el login en Redis
@@ -686,7 +704,8 @@ authRoutes.openapi(verifyMfaLoginRoute, async (c) => {
       sessionData.session.access_token,
       sessionData.session.refresh_token,
       sessionData.session.user.id,
-      sessionData.session.expires_in || 3600
+      sessionData.session.expires_in,
+      tempToken
     )
 
     // Crear cookies de sesión

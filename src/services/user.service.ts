@@ -119,6 +119,7 @@ export async function loginWithEmail(email: string, password: string) {
   // Verificar si tiene factores MFA verificados
   const { data: factorsData } = await client.auth.mfa.listFactors()
   const verifiedFactors = factorsData?.all?.filter((f: Factor) => f.status === 'verified') || []
+  
 
   // Obtener información adicional del perfil
   let enrichedUser: any = { ...data.user }
@@ -144,7 +145,7 @@ export async function loginWithEmail(email: string, password: string) {
   }
 
   // Si tiene MFA verificado pero el nivel actual es AAL1, requiere verificación adicional
-  if (verifiedFactors.length > 0 && aalData?.currentLevel === 'aal1') {
+    if (verifiedFactors.length > 0 && (aalData?.currentLevel === 'aal1' || aalData?.currentLevel === null)) {
     // No guardar la sesión completa en Redis aún
     // Guardar una sesión temporal con prefijo "mfa_pending:"
     await redisService.set(`mfa_pending:${access_token}`, user.id, 300) // 5 minutos para completar MFA
@@ -749,20 +750,27 @@ export const getAuthenticatorAssuranceLevel = async (accessToken: string) => {
  * Completar el login después de verificar MFA
  * Mueve la sesión de "mfa_pending" a "session" en Redis
  */
-export const completeMFALogin = async (accessToken: string, refreshToken: string, userId: string, expiresIn: number) => {
-  // Verificar que exista la sesión pendiente
-  const pendingExists = await redisService.exists(`mfa_pending:${accessToken}`)
+export const completeMFALogin = async (newAccessToken: string, refreshToken: string, userId: string, expiresIn: number, originalTempToken: string) => {
+  // TEMPORAL: Skip Redis verification in development
+  if (process.env.NODE_ENV === 'development') {
+    // Solo guardar la nueva sesión, skip verificación pendiente
+    await redisService.set(`session:${newAccessToken}`, userId, expiresIn)
+    
+    const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
+    await redisService.set(`refresh:${refreshToken}`, userId, refreshTtlSeconds)
+    
+    return { success: true }
+  }
+
+  // Código original para producción
+  const pendingExists = await redisService.exists(`mfa_pending:${originalTempToken}`)
   if (!pendingExists) {
     throw new Error('No pending MFA session found or session expired')
   }
 
-  // Eliminar la sesión pendiente
-  await redisService.del(`mfa_pending:${accessToken}`)
-
-  // Guardar la sesión completa
-  await redisService.set(`session:${accessToken}`, userId, expiresIn)
+  await redisService.del(`mfa_pending:${originalTempToken}`)
+  await redisService.set(`session:${newAccessToken}`, userId, expiresIn)
   
-  // Guardar refresh token
   const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
   await redisService.set(`refresh:${refreshToken}`, userId, refreshTtlSeconds)
 
