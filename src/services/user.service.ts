@@ -30,8 +30,12 @@ export interface UserProfile {
   role: string
   /** URL de la imagen de perfil del usuario (opcional) */
   image?: string
+  /** URL alternativa del avatar (alias de image) */
+  avatar_url?: string
   /** País de residencia del usuario (opcional) */
-  country?: string
+  country?: string,
+  /** Indica si el usuario tiene autenticación de dos factores habilitada */
+  two_factor_enabled?: boolean
   /** Fecha de creación del perfil (opcional) */
   created_at?: string
   /** Fecha de última actualización del perfil (opcional) */
@@ -116,6 +120,29 @@ export async function loginWithEmail(email: string, password: string) {
   const { data: factorsData } = await client.auth.mfa.listFactors()
   const verifiedFactors = factorsData?.all?.filter((f: Factor) => f.status === 'verified') || []
 
+  // Obtener información adicional del perfil
+  let enrichedUser: any = { ...data.user }
+  try {
+    const { data: profile } = await client
+      .from('profiles')
+      .select('image, country')
+      .eq('id', user.id)
+      .single()
+
+    if (profile) {
+      enrichedUser = {
+        ...enrichedUser,
+        image: profile.image || null,
+        avatar_url: profile.image || null,
+        country: profile.country || null,
+        two_factor_enabled: verifiedFactors.length > 0 && verifiedFactors[0].status === 'verified',
+      }
+    }
+  } catch (err) {
+    // Ignorar errores al obtener el perfil adicional
+    console.error('Error fetching profile during login:', err)
+  }
+
   // Si tiene MFA verificado pero el nivel actual es AAL1, requiere verificación adicional
   if (verifiedFactors.length > 0 && aalData?.currentLevel === 'aal1') {
     // No guardar la sesión completa en Redis aún
@@ -123,8 +150,11 @@ export async function loginWithEmail(email: string, password: string) {
     await redisService.set(`mfa_pending:${access_token}`, user.id, 300) // 5 minutos para completar MFA
 
     return {
-      user: data.user,
-      session: data.session,
+      user: enrichedUser,
+      session: {
+        ...data.session,
+        user: enrichedUser,
+      },
       mfaRequired: true,
       factorId: verifiedFactors[0].id,
     }
@@ -137,8 +167,11 @@ export async function loginWithEmail(email: string, password: string) {
   await redisService.set(`refresh:${refresh_token}`, user.id, refreshTtlSeconds)
 
   return {
-    user: data.user,
-    session: data.session,
+    user: enrichedUser,
+    session: {
+      ...data.session,
+      user: enrichedUser,
+    },
     mfaRequired: false,
   }
 }
@@ -359,13 +392,28 @@ export async function getUserById(userId: string, accessToken?: string): Promise
 
   const { data: profile, error } = await client
     .from('profiles')
-    .select('id, email, full_name, role, image, created_at, updated_at')
+    .select('id, email, full_name, role, image, country, created_at, updated_at')
     .eq('id', userId)
     .single()
 
-  if (error || !profile) throw new Error('User not found')
+  if (error || !profile) throw new Error(JSON.stringify(error) || 'User not found')
 
-  return profile as UserProfile
+  // Verificar si tiene MFA habilitado
+  let two_factor_enabled = false
+  if (accessToken) {
+    try {
+      const { data: factorsData } = await client.auth.mfa.listFactors()
+      two_factor_enabled = factorsData?.all?.[0]?.status === 'verified'
+    } catch (err) {
+      // Ignorar errores al obtener factores MFA
+    }
+  }
+
+  return {
+    ...profile,
+    avatar_url: profile.image,
+    two_factor_enabled,
+  } as UserProfile
 }
 
 /**
@@ -375,7 +423,6 @@ export async function updateUser(
   userId: string,
   updateData: Partial<{
     full_name: string
-    phone: string
     address: string
     city: string
     country: string
@@ -597,10 +644,46 @@ export function onAuthStateChange(
 
 /**
  * Obtener usuario a partir de un access_token (usado por el callback OAuth)
+ * Incluye información adicional del perfil (imagen, país) y estado de MFA
  */
 export async function getUserByAccessToken(access_token: string) {
-  const { data, error } = await supabase.auth.getUser(access_token)
-  return { data, error }
+  const client = createSupabaseClient(access_token)
+  const { data: authData, error } = await client.auth.getUser()
+  
+  if (error || !authData?.user) {
+    return { data: authData, error }
+  }
+
+  try {
+    // Obtener información adicional del perfil
+    const { data: profile } = await client
+      .from('profiles')
+      .select('image, country')
+      .eq('id', authData.user.id)
+      .single()
+
+    // Verificar si tiene MFA habilitado
+    const { data: factorsData } = await client.auth.mfa.listFactors()
+    const hasVerifiedMFA = factorsData?.all?.[0]?.status === 'verified'
+
+    // Enriquecer el objeto user con la información adicional
+    const enrichedUser = {
+      ...authData.user,
+      image: profile?.image || null,
+      avatar_url: profile?.image || null,
+      country: profile?.country || null,
+      two_factor_enabled: hasVerifiedMFA,
+    }
+
+    return {
+      data: { user: enrichedUser },
+      error: null,
+    }
+  } catch (err) {
+    // Si falla la consulta adicional, retornar solo los datos de auth
+    console.error('Error fetching additional user data:', err)
+    return { data: authData, error: null }
+  }
 }
 
 

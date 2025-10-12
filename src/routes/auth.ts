@@ -424,7 +424,7 @@ authRoutes.openapi(meRoute, async (c) => {
     return c.json({ success: true, data: userProfile });
   } catch (err) {
     console.error('Error fetching user profile:', err);
-    return c.json({ success: false, error: 'No se pudo obtener el perfil del usuario' }, 500);
+    return c.json({ success: false, error: 'No se pudo obtener el perfil del usuario' + err }, 401);
   }
 });
 
@@ -616,7 +616,7 @@ authRoutes.openapi(enrollMfaRoute, async (c) => {
 // Verify MFA durante configuración inicial
 const verifyMfaSetupRoute = createRoute({
   method: 'post',
-  path: '/mfa/verify-setup',
+  path: '/mfa/verify',
   security: [{ Bearer: [] }],
   request: {
     body: {
@@ -729,24 +729,19 @@ const unenrollMfaRoute = createRoute({
   method: 'delete',
   path: '/mfa/unenroll',
   security: [{ Bearer: [] }],
-  request: {
-    body: {
-      content: {
-        'application/json': {
-          schema: z.object({
-            factorId: z.string()
-          })
-        }
-      }, required: true
-    }
-  },
+  request: {},
   responses: { 200: { description: 'Factor MFA eliminado' } }
 })
 authRoutes.openapi(unenrollMfaRoute, async (c) => {
-  const { factorId } = c.req.valid('json')
   const token = getTokenFromRequest(c)
   if (!token) return c.json({ success: false, error: 'No autenticado' }, 401)
+  const { data: factorsData, error: factorsError } = await userService.listMFAFactors(token)
 
+  if (factorsError) return c.json({ success: false, error: factorsError.message }, 400)
+  if (!factorsData || factorsData.all.length === 0) {
+    return c.json({ success: false, error: 'No hay factores MFA para eliminar' }, 400)
+  }
+  const factorId = factorsData.all[0].id // Asumimos que solo hay un factor y tomamos el primero
   const { data, error } = await userService.unenrollMFA(token, factorId)
   if (error) return c.json({ success: false, error: error.message }, 400)
 
