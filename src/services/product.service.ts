@@ -64,7 +64,7 @@ export interface Product {
   license_type?: string
   created_at: string
   updated_at: string
-  licence_category?: {
+  license_category?: {
     id: string
     type: string
   }
@@ -93,11 +93,11 @@ export interface ProductFilters {
 export async function listProducts(filters: ProductFilters = {}) {
   const { page = 1, limit = 10, category, search } = filters
 
-  // Use admin client to bypass RLS for licence_category
+  // Use admin client to bypass RLS for license_category
   const db = supabaseAdmin ?? supabase
   let query = db
     .from('products')
-    .select('*, licence_category(id, type)', { count: 'exact' })
+    .select('*, license_category(id, type)', { count: 'exact' })
 
   // Apply filters
   if (category) {
@@ -131,11 +131,11 @@ export async function listProducts(filters: ProductFilters = {}) {
 }
 
 export async function getProductById(id: string): Promise<Product | null> {
-  // Use admin client to bypass RLS for licence_category
+  // Use admin client to bypass RLS for license_category
   const db = supabaseAdmin ?? supabase
   const { data: product, error } = await db
     .from('products')
-    .select('*, licence_category(id, type)')
+    .select('*, license_category(id, type)')
     .eq('id', id)
     .single()
 
@@ -175,7 +175,7 @@ export async function createProduct(productData: CreateProductData): Promise<Pro
   // Validar que el license_type existe
   const db = supabaseAdmin ?? supabase
   const { data: licenseType, error: licenseError } = await db
-    .from('licence_category')
+    .from('license_category')
     .select('id')
     .eq('id', productData.license_type)
     .single()
@@ -448,11 +448,11 @@ export async function deleteProduct(id: string): Promise<void> {
 }
 
 export async function getProductsByCategory(category: string): Promise<Product[]> {
-  // Use admin client to bypass RLS for licence_category
+  // Use admin client to bypass RLS for license_category
   const db = supabaseAdmin ?? supabase
   const { data: products, error } = await db
     .from('products')
-    .select('*, licence_category(id, type)')
+    .select('*, license_category(id, type)')
     .eq('category', category)
 
   if (error) {
@@ -468,10 +468,10 @@ export interface LicenseType {
 }
 
 export async function listLicenseTypes(): Promise<LicenseType[]> {
-  // Use admin client to bypass RLS for licence_category
+  // Use admin client to bypass RLS for license_category
   const db = supabaseAdmin ?? supabase
   const { data: licenseTypes, error } = await db
-    .from('licence_category')
+    .from('license_category')
     .select('*')
 
   if (error) {

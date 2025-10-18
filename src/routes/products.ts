@@ -177,7 +177,7 @@ const Product = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   product_keys: z.array(ProductKey).optional(),
-  licence_category: LicenseType.optional()
+  license_category: LicenseType.optional()
 })
 
 const CreateProductData = z.object({
@@ -279,6 +279,40 @@ productRoutes.openapi(listProductsRoute, async (c) => {
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch products'
+    }, 500)
+  }
+})
+
+// License Types Endpoint
+const listLicenseTypesRoute = createRoute({
+  method: 'get',
+  path: '/license-types',
+  responses: {
+    200: {
+      description: 'List of license types',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.boolean(),
+            data: z.array(LicenseType)
+          })
+        }
+      }
+    },
+    500: {
+      description: 'Failed to fetch license types'
+    }
+  }
+})
+
+productRoutes.openapi(listLicenseTypesRoute, async (c) => {
+  try {
+    const licenseTypes = await productService.listLicenseTypes()
+    return c.json({ success: true, data: licenseTypes })
+  } catch (error) {
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch license types'
     }, 500)
   }
 })
@@ -475,40 +509,6 @@ productRoutes.openapi(deleteProductRoute, async (c) => {
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to delete product'
-    }, 500)
-  }
-})
-
-// License Types Endpoint
-const listLicenseTypesRoute = createRoute({
-  method: 'get',
-  path: '/license-types',
-  responses: {
-    200: {
-      description: 'List of license types',
-      content: {
-        'application/json': {
-          schema: z.object({
-            success: z.boolean(),
-            data: z.array(LicenseType)
-          })
-        }
-      }
-    },
-    500: {
-      description: 'Failed to fetch license types'
-    }
-  }
-})
-
-productRoutes.openapi(listLicenseTypesRoute, async (c) => {
-  try {
-    const licenseTypes = await productService.listLicenseTypes()
-    return c.json({ success: true, data: licenseTypes })
-  } catch (error) {
-    return c.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to fetch license types'
     }, 500)
   }
 })
