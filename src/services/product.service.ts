@@ -61,8 +61,13 @@ export interface Product {
   category: string
   image_url?: string
   stock_quantity: number
+  license_type?: string
   created_at: string
   updated_at: string
+  licence_category?: {
+    id: string
+    type: string
+  }
 }
 
 export interface CreateProductData {
@@ -74,6 +79,7 @@ export interface CreateProductData {
   // Nuevo: archivo de imagen (File | Buffer) cuando se usa form-data
   image_file?: File | Buffer
   stock_quantity: number
+  license_type: string
   product_keys?: Omit<CreateProductKeyData, 'product_id'>[] // Opcional: claves a crear junto con el producto
 }
 
@@ -87,9 +93,11 @@ export interface ProductFilters {
 export async function listProducts(filters: ProductFilters = {}) {
   const { page = 1, limit = 10, category, search } = filters
 
-  let query = supabase
+  // Use admin client to bypass RLS for licence_category
+  const db = supabaseAdmin ?? supabase
+  let query = db
     .from('products')
-    .select('*', { count: 'exact' })
+    .select('*, licence_category(id, type)', { count: 'exact' })
 
   // Apply filters
   if (category) {
@@ -123,9 +131,11 @@ export async function listProducts(filters: ProductFilters = {}) {
 }
 
 export async function getProductById(id: string): Promise<Product | null> {
-  const { data: product, error } = await supabase
+  // Use admin client to bypass RLS for licence_category
+  const db = supabaseAdmin ?? supabase
+  const { data: product, error } = await db
     .from('products')
-    .select('*')
+    .select('*, licence_category(id, type)')
     .eq('id', id)
     .single()
 
@@ -162,6 +172,18 @@ export async function getProductWithKeys(id: string) {
 
 
 export async function createProduct(productData: CreateProductData): Promise<Product> {
+  // Validar que el license_type existe
+  const db = supabaseAdmin ?? supabase
+  const { data: licenseType, error: licenseError } = await db
+    .from('licence_category')
+    .select('id')
+    .eq('id', productData.license_type)
+    .single()
+
+  if (licenseError || !licenseType) {
+    throw new Error(`Invalid license_type: ${productData.license_type}`)
+  }
+
   // Extraer product_keys si vienen
   const { product_keys, ...productFields } = productData as any;
   // Si frontend envía una imagen como data URL (data:<mime>;base64,...), la guardamos y la subimos
@@ -175,7 +197,6 @@ export async function createProduct(productData: CreateProductData): Promise<Pro
   // Envolver la llamada a Supabase para capturar errores de fetch u otros problemas de red
   let product: any = null
   try {
-    const db = supabaseAdmin ?? supabase
     const resp = await db
       .from('products')
       .insert({
@@ -427,9 +448,11 @@ export async function deleteProduct(id: string): Promise<void> {
 }
 
 export async function getProductsByCategory(category: string): Promise<Product[]> {
-  const { data: products, error } = await supabase
+  // Use admin client to bypass RLS for licence_category
+  const db = supabaseAdmin ?? supabase
+  const { data: products, error } = await db
     .from('products')
-    .select('*')
+    .select('*, licence_category(id, type)')
     .eq('category', category)
 
   if (error) {
@@ -437,4 +460,23 @@ export async function getProductsByCategory(category: string): Promise<Product[]
   }
 
   return products || []
+}
+
+export interface LicenseType {
+  id: string
+  type: string
+}
+
+export async function listLicenseTypes(): Promise<LicenseType[]> {
+  // Use admin client to bypass RLS for licence_category
+  const db = supabaseAdmin ?? supabase
+  const { data: licenseTypes, error } = await db
+    .from('licence_category')
+    .select('*')
+
+  if (error) {
+    throw new Error(`Failed to fetch license types: ${error.message}`)
+  }
+
+  return licenseTypes || []
 }
