@@ -58,11 +58,11 @@ export interface Order {
 export interface OrderItem {
   id: string
   order_id: string
-  product_id: string
+  product_id: number
   quantity: number
   price: number
   product?: {
-    id: string
+    id: number
     name: string
     image_url?: string
   }
@@ -319,7 +319,7 @@ export async function getOrderUserId(orderId: string): Promise<string | null> {
 /**
  * Obtiene productos por sus IDs (para Mercado Pago)
  */
-export async function getProductsByIds(productIds: string[]) {
+export async function getProductsByIds(productIds: number[]) {
   const { data: products, error } = await supabase
     .from('products')
     .select('*')
@@ -336,7 +336,7 @@ export async function getProductsByIds(productIds: string[]) {
  * Verifica el stock de productos antes de crear una orden
  */
 export async function verifyProductsStock(
-  items: Array<{ product_id: string; quantity: number }>
+  items: Array<{ product_id: number; quantity: number }>
 ): Promise<{ valid: boolean; message?: string }> {
   const productIds = items.map(item => item.product_id);
   const products = await getProductsByIds(productIds);

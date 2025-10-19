@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { authMiddleware } from '../middlewares/auth.js';
+import { cookieToAuthHeader } from '../middlewares/cookieToAuthHeader.js';
 import * as paymentService from '../services/payment.service.js';
 import * as orderService from '../services/order.service.js';
 import * as cartService from '../services/cart.service.js';
@@ -8,11 +9,19 @@ import type { CreatePaymentRequest, PaymentNotification } from '../types/payment
 
 const payment = new Hono();
 
+// Aplicar middlewares globales (excepto webhook)
+payment.use('/create', cookieToAuthHeader)
+payment.use('/create', authMiddleware)
+payment.use('/status/:paymentId', cookieToAuthHeader)
+payment.use('/status/:paymentId', authMiddleware)
+payment.use('/order/:orderId', cookieToAuthHeader)
+payment.use('/order/:orderId', authMiddleware)
+
 /**
  * POST /api/payments/create
  * Crea una preferencia de pago desde el carrito del usuario
  */
-payment.post('/create', authMiddleware, async (c) => {
+payment.post('/create', async (c) => {
   try {
     const userId = c.get('userId');
     if (!userId) {
@@ -179,7 +188,7 @@ payment.post('/webhook', async (c) => {
  * GET /api/payments/status/:paymentId
  * Verifica el estado de un pago específico
  */
-payment.get('/status/:paymentId', authMiddleware, async (c) => {
+payment.get('/status/:paymentId', async (c) => {
   try {
     const userId = c.get('userId');
     if (!userId) {
@@ -203,7 +212,7 @@ payment.get('/status/:paymentId', authMiddleware, async (c) => {
  * GET /api/payments/order/:orderId
  * Obtiene el estado de una orden con sus items
  */
-payment.get('/order/:orderId', authMiddleware, async (c) => {
+payment.get('/order/:orderId', async (c) => {
   try {
     const userId = c.get('userId');
     if (!userId) {

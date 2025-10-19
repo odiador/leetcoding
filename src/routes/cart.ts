@@ -35,8 +35,18 @@
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import * as cartService from '../services/cart.service.js'
+import { cookieToAuthHeader } from '../middlewares/cookieToAuthHeader.js'
 
 const cartRoutes = new OpenAPIHono()
+
+// Aplicar middleware para convertir cookie a Authorization header
+cartRoutes.use('*', cookieToAuthHeader)
+
+// Helper: Extrae token desde Authorization header
+function getTokenFromRequest(c: any): string | undefined {
+  const authHeader = c.req.header('Authorization')
+  return authHeader ? authHeader.replace('Bearer ', '') : undefined
+}
 
 // Schemas
 const ProductSummary = z.object({
@@ -47,9 +57,9 @@ const ProductSummary = z.object({
 })
 
 const CartItem = z.object({
-  id: z.string().uuid(),
-  user_id: z.string().uuid(),
-  productId: z.number(),
+  id: z.number(),
+  cart_id: z.number().optional(),
+  product_id: z.number(),
   quantity: z.number().int().min(1),
   created_at: z.string(),
   updated_at: z.string(),
@@ -121,6 +131,7 @@ const getCartRoute = createRoute({
 cartRoutes.openapi(getCartRoute, async (c) => {
   try {
     const userId = c.get('userId')
+    const token = getTokenFromRequest(c)
 
     if (!userId) {
       return c.json({
@@ -129,7 +140,7 @@ cartRoutes.openapi(getCartRoute, async (c) => {
       }, 401)
     }
 
-    const cart = await cartService.getUserCart(userId)
+    const cart = await cartService.getUserCart(userId, token)
 
     return c.json({
       success: true,
@@ -177,7 +188,8 @@ const addToCartRoute = createRoute({
 cartRoutes.openapi(addToCartRoute, async (c) => {
   try {
     const userId = c.get('userId')
-  const { productId, quantity } = c.req.valid('json')
+    const token = getTokenFromRequest(c)
+    const { productId, quantity } = c.req.valid('json')
 
     if (!userId) {
       return c.json({
@@ -186,7 +198,7 @@ cartRoutes.openapi(addToCartRoute, async (c) => {
       }, 401)
     }
 
-    const cartItem = await cartService.addToCart(userId, Number(productId), quantity)
+    const cartItem = await cartService.addToCart(userId, Number(productId), quantity, token)
 
     return c.json({
       success: true,
@@ -205,7 +217,7 @@ const updateCartItemRoute = createRoute({
   path: '/items/:itemId',
   request: {
     params: z.object({
-      itemId: z.string().uuid()
+      itemId: z.string().transform(Number)
     }),
     body: {
       content: {
@@ -237,8 +249,9 @@ const updateCartItemRoute = createRoute({
 cartRoutes.openapi(updateCartItemRoute, async (c) => {
   try {
     const userId = c.get('userId')
-  const { itemId } = c.req.valid('param')
-  const { quantity } = c.req.valid('json')
+    const token = getTokenFromRequest(c)
+    const { itemId } = c.req.valid('param')
+    const { quantity } = c.req.valid('json')
 
     if (!userId) {
       return c.json({
@@ -247,7 +260,7 @@ cartRoutes.openapi(updateCartItemRoute, async (c) => {
       }, 401)
     }
 
-    const cartItem = await cartService.updateCartItem(userId, itemId, quantity)
+    const cartItem = await cartService.updateCartItem(userId, itemId, quantity, token)
 
     return c.json({
       success: true,
@@ -266,7 +279,7 @@ const removeFromCartRoute = createRoute({
   path: '/items/:itemId',
   request: {
     params: z.object({
-      itemId: z.string().uuid()
+      itemId: z.string().transform(Number)
     })
   },
   responses: {
@@ -290,7 +303,8 @@ const removeFromCartRoute = createRoute({
 cartRoutes.openapi(removeFromCartRoute, async (c) => {
   try {
     const userId = c.get('userId')
-  const { itemId } = c.req.valid('param')
+    const token = getTokenFromRequest(c)
+    const { itemId } = c.req.valid('param')
 
     if (!userId) {
       return c.json({
@@ -299,7 +313,7 @@ cartRoutes.openapi(removeFromCartRoute, async (c) => {
       }, 401)
     }
 
-    await cartService.removeFromCart(userId, itemId)
+    await cartService.removeFromCart(userId, itemId, token)
 
     return c.json({
       success: true,
@@ -337,6 +351,7 @@ const clearCartRoute = createRoute({
 cartRoutes.openapi(clearCartRoute, async (c) => {
   try {
     const userId = c.get('userId')
+    const token = getTokenFromRequest(c)
 
     if (!userId) {
       return c.json({
@@ -345,7 +360,7 @@ cartRoutes.openapi(clearCartRoute, async (c) => {
       }, 401)
     }
 
-    await cartService.clearCart(userId)
+    await cartService.clearCart(userId, token)
 
     return c.json({
       success: true,
