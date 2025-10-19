@@ -42,6 +42,7 @@
  */
 
 import { supabase } from '../config/supabase.js'
+import { createSupabaseClient } from './user.service.js'
 
 export interface Order {
   id: string
@@ -73,8 +74,10 @@ export interface CreateOrderData {
   paymentMethod: string
 }
 
-export async function getUserOrders(userId: string): Promise<Order[]> {
-  const { data: orders, error } = await supabase
+export async function getUserOrders(userId: string, accessToken?: string): Promise<Order[]> {
+  const client = accessToken ? createSupabaseClient(accessToken) : supabase
+  
+  const { data: orders, error } = await client
     .from('orders')
     .select(`
       *,
@@ -97,8 +100,10 @@ export async function getUserOrders(userId: string): Promise<Order[]> {
   return orders || []
 }
 
-export async function getOrderById(userId: string, orderId: string): Promise<Order | null> {
-  const { data: order, error } = await supabase
+export async function getOrderById(userId: string, orderId: string, accessToken?: string): Promise<Order | null> {
+  const client = accessToken ? createSupabaseClient(accessToken) : supabase
+  
+  const { data: order, error } = await client
     .from('orders')
     .select(`
       *,
@@ -125,9 +130,23 @@ export async function getOrderById(userId: string, orderId: string): Promise<Ord
   return order
 }
 
-export async function createOrder(userId: string, orderData: CreateOrderData): Promise<Order> {
-  // Get user's cart
-  const { data: cartItems, error: cartError } = await supabase
+export async function createOrder(userId: string, orderData: CreateOrderData, accessToken?: string): Promise<Order> {
+  // Usar cliente autenticado si se proporciona token
+  const client = accessToken ? createSupabaseClient(accessToken) : supabase
+
+  // Get user's cart first
+  const { data: userCart, error: cartFetchError } = await client
+    .from('carts')
+    .select('id')
+    .eq('user_id', userId)
+    .single()
+
+  if (cartFetchError || !userCart) {
+    throw new Error('Cart not found')
+  }
+
+  // Get cart items
+  const { data: cartItems, error: cartError } = await client
     .from('cart_items')
     .select(`
       *,
@@ -137,7 +156,7 @@ export async function createOrder(userId: string, orderData: CreateOrderData): P
         price
       )
     `)
-    .eq('user_id', userId)
+    .eq('cart_id', userCart.id)
 
   if (cartError) {
     throw new Error(`Failed to fetch cart: ${cartError.message}`)
@@ -153,7 +172,7 @@ export async function createOrder(userId: string, orderData: CreateOrderData): P
   }, 0)
 
   // Create order
-  const { data: order, error: orderError } = await supabase
+  const { data: order, error: orderError } = await client
     .from('orders')
     .insert({
       user_id: userId,
@@ -179,7 +198,7 @@ export async function createOrder(userId: string, orderData: CreateOrderData): P
     price: cartItem.product.price
   }))
 
-  const { error: itemsError } = await supabase
+  const { error: itemsError } = await client
     .from('order_items')
     .insert(orderItems)
 
@@ -187,18 +206,18 @@ export async function createOrder(userId: string, orderData: CreateOrderData): P
     throw new Error(`Failed to create order items: ${itemsError.message}`)
   }
 
-  // Clear cart
-  const { error: clearError } = await supabase
+  // Clear cart items
+  const { error: clearError } = await client
     .from('cart_items')
     .delete()
-    .eq('user_id', userId)
+    .eq('cart_id', userCart.id)
 
   if (clearError) {
     throw new Error(`Failed to clear cart: ${clearError.message}`)
   }
 
   // Return order with items
-  return await getOrderById(userId, order.id) as Order
+  return await getOrderById(userId, order.id, accessToken) as Order
 }
 
 export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<Order> {

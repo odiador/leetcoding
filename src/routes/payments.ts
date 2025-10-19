@@ -9,6 +9,12 @@ import type { CreatePaymentRequest, PaymentNotification } from '../types/payment
 
 const payment = new Hono();
 
+// Helper: Extrae token desde Authorization header
+function getTokenFromRequest(c: any): string | undefined {
+  const authHeader = c.req.header('Authorization')
+  return authHeader ? authHeader.replace('Bearer ', '') : undefined
+}
+
 // Aplicar middlewares globales (excepto webhook)
 payment.use('/create', cookieToAuthHeader)
 payment.use('/create', authMiddleware)
@@ -27,13 +33,17 @@ payment.post('/create', async (c) => {
     if (!userId) {
       return c.json({ error: 'Usuario no autenticado' }, 401);
     }
+    
+    // Extraer token para operaciones autenticadas
+    const token = getTokenFromRequest(c);
+    
     const body = await c.req.json<{
       payer?: CreatePaymentRequest['payer'];
       shipping_address?: any;
     }>();
 
-    // Obtener el carrito del usuario
-    const cart = await cartService.getUserCart(userId);
+    // Obtener el carrito del usuario (con token)
+    const cart = await cartService.getUserCart(userId, token);
 
     if (!cart.items || cart.items.length === 0) {
       return c.json({ error: 'El carrito está vacío' }, 400);
@@ -55,11 +65,11 @@ payment.post('/create', async (c) => {
       return c.json({ error: stockCheck.message }, 400);
     }
 
-    // Crear orden en estado 'pending'
+    // Crear orden en estado 'pending' (con token)
     const order = await orderService.createOrder(userId, {
       shippingAddress: body.shipping_address || {},
       paymentMethod: 'mercadopago',
-    });
+    }, token);
 
     // Obtener información del usuario para el pago
     const { data: profile } = await supabase
@@ -218,9 +228,12 @@ payment.get('/order/:orderId', async (c) => {
     if (!userId) {
       return c.json({ error: 'Usuario no autenticado' }, 401);
     }
+    
+    // Extraer token para operaciones autenticadas
+    const token = getTokenFromRequest(c);
     const orderId = c.req.param('orderId');
     
-    const order = await orderService.getOrderById(userId, orderId);
+    const order = await orderService.getOrderById(userId, orderId, token);
     
     if (!order) {
       return c.json({ error: 'Orden no encontrada' }, 404);
