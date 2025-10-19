@@ -37,7 +37,6 @@ import { supabase } from '../config/supabase.js'
 
 export interface CartItem {
   id: string
-  user_id: string
   product_id: string
   quantity: number
   created_at: string
@@ -103,7 +102,7 @@ export async function getUserCart(userId: string): Promise<Cart> {
   }
 }
 
-export async function addToCart(userId: string, productId: string, quantity: number): Promise<CartItem> {
+export async function addToCart(userId: string, productId: number, quantity: number): Promise<CartItem> {
   // Primero obtener o crear el cart del usuario
   let userCart = null
 
