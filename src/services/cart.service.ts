@@ -138,6 +138,21 @@ export async function addToCart(userId: string, productId: number, quantity: num
   // Usar cliente autenticado si se proporciona token
   const client = accessToken ? createSupabaseClient(accessToken) : supabase
   
+  // Validar stock antes de agregar
+  const { data: product, error: productError } = await client
+    .from('products')
+    .select('id, stock_quantity')
+    .eq('id', productId)
+    .single()
+
+  if (productError) {
+    throw new Error(`Product not found: ${productError.message}`)
+  }
+
+  if (!product || product.stock_quantity < quantity) {
+    throw new Error(`Insufficient stock. Available: ${product?.stock_quantity || 0}, Requested: ${quantity}`)
+  }
+
   // Primero obtener o crear el cart del usuario
   let userCart = null
 
@@ -177,8 +192,13 @@ export async function addToCart(userId: string, productId: number, quantity: num
     .single()
 
   if (existingItem) {
-    // Update quantity
+    // Update quantity - validar que no exceda el stock
     const newQuantity = existingItem.quantity + quantity
+    
+    if (newQuantity > product.stock_quantity) {
+      throw new Error(`Insufficient stock. Available: ${product.stock_quantity}, Requested: ${newQuantity}`)
+    }
+    
     const { data: updatedItem, error } = await client
       .from('cart_items')
       .update({
@@ -245,6 +265,33 @@ export async function updateCartItem(userId: string, itemId: number, quantity: n
 
   if (cartError) {
     throw new Error(`Failed to fetch user cart: ${cartError.message}`)
+  }
+
+  // Obtener el item del carrito para validar el producto
+  const { data: cartItem, error: itemError } = await client
+    .from('cart_items')
+    .select('product_id')
+    .eq('id', itemId)
+    .eq('cart_id', userCart.id)
+    .single()
+
+  if (itemError) {
+    throw new Error(`Cart item not found: ${itemError.message}`)
+  }
+
+  // Validar stock
+  const { data: product, error: productError } = await client
+    .from('products')
+    .select('id, stock_quantity')
+    .eq('id', cartItem.product_id)
+    .single()
+
+  if (productError) {
+    throw new Error(`Product not found: ${productError.message}`)
+  }
+
+  if (!product || product.stock_quantity < quantity) {
+    throw new Error(`Insufficient stock. Available: ${product?.stock_quantity || 0}, Requested: ${quantity}`)
   }
 
   const { data: updatedItem, error } = await client
@@ -357,4 +404,57 @@ export async function getCartItemCount(userId: string, accessToken?: string): Pr
   }
 
   return count || 0
+}
+
+/**
+ * Maneja múltiples operaciones de carrito en batch
+ */
+export async function manageBatchCartItems(
+  userId: string,
+  operations: Array<{ productId: number; quantity: number }>,
+  accessToken?: string
+): Promise<{ success: boolean; results: Array<{ productId: number; action: string; error?: string }> }> {
+  const results: Array<{ productId: number; action: string; error?: string }> = []
+
+  for (const operation of operations) {
+    try {
+      if (operation.quantity === 0) {
+        // Eliminar item
+        const cart = await getUserCart(userId, accessToken)
+        const existingItem = cart.items?.find(item => item.product_id === operation.productId)
+        
+        if (existingItem) {
+          await removeFromCart(userId, existingItem.id, accessToken)
+          results.push({ productId: operation.productId, action: 'removed' })
+        } else {
+          results.push({ productId: operation.productId, action: 'skipped' })
+        }
+      } else {
+        // Verificar si existe
+        const cart = await getUserCart(userId, accessToken)
+        const existingItem = cart.items?.find(item => item.product_id === operation.productId)
+
+        if (existingItem) {
+          // Actualizar
+          await updateCartItem(userId, existingItem.id, operation.quantity, accessToken)
+          results.push({ productId: operation.productId, action: 'updated' })
+        } else {
+          // Agregar
+          await addToCart(userId, operation.productId, operation.quantity, accessToken)
+          results.push({ productId: operation.productId, action: 'added' })
+        }
+      }
+    } catch (error) {
+      results.push({
+        productId: operation.productId,
+        action: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  return {
+    success: results.every(r => r.action !== 'failed'),
+    results
+  }
 }

@@ -13,6 +13,7 @@
  * - ✅ Limpiar carrito completo
  * - ✅ Cálculo automático de totales
  * - ✅ Validación de stock y cantidades
+ * - ✅ Operaciones batch para múltiples items
  *
  * @module routes/cart
  *
@@ -30,6 +31,8 @@
  * // PUT /cart/:itemId - Actualizar cantidad de item
  * // DELETE /cart/:itemId - Eliminar item del carrito
  * // DELETE /cart - Limpiar carrito completo
+ * // POST /cart/items/manage - Gestionar item individual
+ * // POST /cart/items/batch - Gestionar múltiples items en batch
  * ```
  */
 
@@ -223,6 +226,13 @@ const manageCartItemData = z.object({
   quantity: z.number().int().min(0) // Permite 0 para eliminar
 })
 
+const batchCartItemData = z.object({
+  operations: z.array(z.object({
+    productId: z.number(),
+    quantity: z.number().int().min(0) // 0 = eliminar
+  })).min(1)
+})
+
 const manageCartItemRoute = createRoute({
   method: 'post',
   path: '/items/manage',
@@ -319,6 +329,69 @@ cartRoutes.openapi(manageCartItemRoute, async (c) => {
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to manage cart item'
+    }, 400)
+  }
+})
+
+// Nuevo endpoint: Batch manage
+const batchManageCartItemsRoute = createRoute({
+  method: 'post',
+  path: '/items/batch',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: batchCartItemData
+        }
+      },
+      required: true
+    }
+  },
+  responses: {
+    200: {
+      description: 'Batch operations completed',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.boolean(),
+            results: z.array(z.object({
+              productId: z.number(),
+              action: z.string(),
+              error: z.string().optional()
+            }))
+          })
+        }
+      }
+    },
+    401: {
+      description: 'Not authenticated'
+    },
+    400: {
+      description: 'Failed to execute batch operations'
+    }
+  }
+})
+
+cartRoutes.openapi(batchManageCartItemsRoute, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const token = getTokenFromRequest(c)
+    const { operations } = c.req.valid('json')
+
+    if (!userId) {
+      return c.json({
+        success: false,
+        error: 'Not authenticated'
+      }, 401)
+    }
+
+    const result = await cartService.manageBatchCartItems(userId, operations, token)
+
+    return c.json(result)
+  } catch (error) {
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to execute batch operations'
     }, 400)
   }
 })
