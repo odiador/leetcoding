@@ -63,7 +63,7 @@ export async function createPaymentPreference(
     return response;
   } catch (error) {
     console.error('Error creating preference:', error);
-    throw new Error(`Failed to create payment preference: ${error}`);
+    throw new Error(`Failed to create payment preference: ${JSON.stringify(error)}`);
   }
 }
 
