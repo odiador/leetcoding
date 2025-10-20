@@ -91,11 +91,34 @@ payment.post('/create', async (c) => {
       order.id
     );
 
+    // Determinar la URL correcta según el entorno
+    const checkoutUrl = paymentService.IS_SANDBOX 
+      ? preference.sandbox_init_point 
+      : preference.init_point;
+
+    console.log('💳 Payment preference ready:', {
+      mode: paymentService.IS_SANDBOX ? '🧪 SANDBOX' : '🚀 PRODUCTION',
+      preference_id: preference.id,
+      checkout_url: checkoutUrl,
+      url_type: paymentService.IS_SANDBOX ? 'sandbox_init_point' : 'init_point',
+    });
+
+    // Verificación de seguridad
+    if (paymentService.IS_SANDBOX && checkoutUrl && !checkoutUrl.includes('sandbox')) {
+      console.error('🚨 CRITICAL ERROR: Using production URL in sandbox mode!');
+      console.error('URL:', checkoutUrl);
+      return c.json({ 
+        error: 'Configuración incorrecta: URL de producción en modo sandbox',
+        details: 'El sistema está configurado en modo sandbox pero la URL generada es de producción'
+      }, 500);
+    }
+
     return c.json({
       preference_id: preference.id,
-      init_point: preference.init_point,
-      sandbox_init_point: preference.sandbox_init_point,
+      init_point: checkoutUrl, // URL correcta según el entorno
+      sandbox_init_point: preference.sandbox_init_point, // Por compatibilidad
       order_id: order.id,
+      mode: paymentService.IS_SANDBOX ? 'sandbox' : 'production',
     });
   } catch (error) {
     console.error('❌ Error creating payment preference:', error);

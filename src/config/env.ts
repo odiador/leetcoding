@@ -75,6 +75,8 @@ export const envSchema = z.object({
   // Mercado Pago
   /** Token de acceso de Mercado Pago (servidor) - usado para crear preferencias */
   MERCADO_PAGO_ACCESS_TOKEN: z.string().min(1).optional(),
+  /** Token de prueba de Mercado Pago (sandbox) - usado en desarrollo */
+  MERCADO_PAGO_TEST_ACCESS_TOKEN: z.string().min(1).optional(),
   /** Public key de Mercado Pago (cliente) - usada en frontend si es necesaria */
   MERCADO_PAGO_PUBLIC_KEY: z.string().optional(),
   /** Path público relativo para recibir notificaciones (webhook) */
@@ -129,6 +131,7 @@ export const {
   CSRF_COOKIE
   ,
   MERCADO_PAGO_ACCESS_TOKEN,
+  MERCADO_PAGO_TEST_ACCESS_TOKEN,
   MERCADO_PAGO_PUBLIC_KEY,
   MERCADO_PAGO_WEBHOOK_PATH,
   FRONTEND_URL
