@@ -81,12 +81,12 @@ const Cart = z.object({
 })
 
 const AddToCartData = z.object({
-  productId: z.number(),
-  quantity: z.number().int().min(1)
+  productId: z.union([z.number(), z.string().transform(Number)]),
+  quantity: z.union([z.number(), z.string().transform(Number)]).pipe(z.number().int().min(1))
 })
 
 const UpdateCartItemData = z.object({
-  quantity: z.number().int().min(1)
+  quantity: z.union([z.number(), z.string().transform(Number)]).pipe(z.number().int().min(1))
 })
 
 const GetCartResponse = z.object({
@@ -222,14 +222,14 @@ cartRoutes.openapi(addToCartRoute, async (c) => {
 
 // Nuevo endpoint: Manejar items del carrito (agregar, actualizar o eliminar según cantidad)
 const manageCartItemData = z.object({
-  productId: z.number(),
-  quantity: z.number().int().min(0) // Permite 0 para eliminar
+  productId: z.union([z.number(), z.string().transform(Number)]),
+  quantity: z.union([z.number(), z.string().transform(Number)]).pipe(z.number().int().min(0)) // Permite 0 para eliminar
 })
 
 const batchCartItemData = z.object({
   operations: z.array(z.object({
-    productId: z.number(),
-    quantity: z.number().int().min(0) // 0 = eliminar
+    productId: z.union([z.number(), z.string().transform(Number)]),
+    quantity: z.union([z.number(), z.string().transform(Number)]).pipe(z.number().int().min(0)) // 0 = eliminar
   })).min(1)
 })
 
