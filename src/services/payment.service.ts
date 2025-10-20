@@ -30,12 +30,31 @@ export async function createPaymentPreference(
     id: product.id,
     title: product.name,
     quantity: 1,
-    unit_price: product.price,
+    unit_price: Math.round(product.price),
     currency_id: 'COP', // Cambiar según tu país (ARS, MXN, CLP, etc.)
   }));
 
-  const backUrl = FRONTEND_URL || 'http://localhost:3000';
+  // Validar URLs requeridas
+  const backUrl = FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
   const apiUrl = process.env.API_URL || 'http://localhost:3010';
+
+  // Validación adicional para producción
+  if (!backUrl || backUrl === 'undefined') {
+    throw new Error('FRONTEND_URL is not configured. Please set it in your environment variables.');
+  }
+
+  if (!process.env.MERCADO_PAGO_ACCESS_TOKEN) {
+    throw new Error('MERCADO_PAGO_ACCESS_TOKEN is not configured.');
+  }
+
+  console.log('🔍 Payment URLs:', {
+    backUrl,
+    apiUrl,
+    success: `${backUrl}/payment/success`,
+    failure: `${backUrl}/payment/failure`,
+    pending: `${backUrl}/payment/pending`,
+    webhook: `${apiUrl}/payments/webhook`,
+  });
 
   const preferenceData = {
     items,
@@ -49,7 +68,8 @@ export async function createPaymentPreference(
       failure: `${backUrl}/payment/failure`,
       pending: `${backUrl}/payment/pending`,
     },
-    auto_return: 'approved' as const,
+    // Remover auto_return si estás usando localhost
+    // auto_return: 'approved' as const,
     external_reference: orderId,
     notification_url: `${apiUrl}/payments/webhook`,
     statement_descriptor: 'MERCADOR_STORE',
@@ -60,10 +80,22 @@ export async function createPaymentPreference(
 
   try {
     const response = await preferenceApi.create({ body: preferenceData });
+    console.log('✅ Payment preference created:', response.id);
     return response;
-  } catch (error) {
-    console.error('Error creating preference:', error);
-    throw new Error(`Failed to create payment preference: ${JSON.stringify(error)}`);
+  } catch (error: any) {
+    console.error('❌ Error creating preference:', {
+      message: error.message,
+      cause: error.cause,
+      response: error.response?.data,
+      status: error.status,
+    });
+    
+    // Extraer mensaje de error más descriptivo
+    const errorMessage = error.response?.data?.message 
+      || error.message 
+      || 'Unknown error occurred';
+    
+    throw new Error(`Failed to create payment preference: ${errorMessage}`);
   }
 }
 
