@@ -42,6 +42,7 @@
  */
 
 import { supabase } from '../config/supabase.js'
+import { supabaseAdmin } from '../config/supabase.js'
 import { createSupabaseClient } from './user.service.js'
 
 export interface Order {
@@ -75,7 +76,10 @@ export interface CreateOrderData {
 }
 
 export async function getUserOrders(userId: string, accessToken?: string): Promise<Order[]> {
-  const client = accessToken ? createSupabaseClient(accessToken) : supabase
+  // Usar cliente autenticado si se proporciona token, sino usar admin
+  const client = accessToken 
+    ? createSupabaseClient(accessToken) 
+    : (supabaseAdmin || supabase);
   
   const { data: orders, error } = await client
     .from('orders')
@@ -101,7 +105,10 @@ export async function getUserOrders(userId: string, accessToken?: string): Promi
 }
 
 export async function getOrderById(userId: string, orderId: string, accessToken?: string): Promise<Order | null> {
-  const client = accessToken ? createSupabaseClient(accessToken) : supabase
+  // Usar cliente autenticado si se proporciona token, sino usar admin
+  const client = accessToken 
+    ? createSupabaseClient(accessToken) 
+    : (supabaseAdmin || supabase);
   
   const { data: order, error } = await client
     .from('orders')
@@ -131,8 +138,10 @@ export async function getOrderById(userId: string, orderId: string, accessToken?
 }
 
 export async function createOrder(userId: string, orderData: CreateOrderData, accessToken?: string): Promise<Order> {
-  // Usar cliente autenticado si se proporciona token
-  const client = accessToken ? createSupabaseClient(accessToken) : supabase
+  // Usar cliente autenticado si se proporciona token, sino usar admin
+  const client = accessToken 
+    ? createSupabaseClient(accessToken) 
+    : (supabaseAdmin || supabase);
 
   // Get user's cart first
   const { data: userCart, error: cartFetchError } = await client
@@ -220,8 +229,13 @@ export async function createOrder(userId: string, orderData: CreateOrderData, ac
   return await getOrderById(userId, order.id, accessToken) as Order
 }
 
-export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<Order> {
-  const { data: order, error } = await supabase
+export async function updateOrderStatus(orderId: string, status: Order['status'], accessToken?: string): Promise<Order> {
+  // Usar cliente autenticado si se proporciona token, sino usar admin
+  const client = accessToken 
+    ? createSupabaseClient(accessToken) 
+    : (supabaseAdmin || supabase);
+    
+  const { data: order, error } = await client
     .from('orders')
     .update({
       status,
@@ -251,7 +265,10 @@ export async function updateOrderStatus(orderId: string, status: Order['status']
 export async function getAllOrders(filters: { status?: string; page?: number; limit?: number } = {}): Promise<{ orders: Order[]; total: number }> {
   const { status, page = 1, limit = 10 } = filters
 
-  let query = supabase
+  // Usar cliente admin para operaciones administrativas
+  const client = supabaseAdmin || supabase;
+
+  let query = client
     .from('orders')
     .select(`
       *,
@@ -286,25 +303,35 @@ export async function getAllOrders(filters: { status?: string; page?: number; li
 }
 
 /**
- * Actualiza el estado de una orden y opcionalmente el payment_id
+ * Actualiza el estado de una orden
+ * Nota: El payment_id se registra en los logs pero no se guarda en DB
+ * (la columna payment_id no existe en la tabla orders)
+ * 
+ * Si no se proporciona accessToken, usa el cliente admin de Supabase
+ * (útil para webhooks sin autenticación de usuario)
  */
 export async function updateOrderStatusWithPayment(
   orderId: string,
   status: 'pending' | 'confirmed' | 'shipped' | 'delivered' | 'cancelled',
-  paymentId?: string
+  paymentId?: string,
+  accessToken?: string
 ) {
-  const updateData: any = {
-    status,
-    updated_at: new Date().toISOString(),
-  };
-
+  // Log del payment_id para trazabilidad
   if (paymentId) {
-    updateData.payment_id = paymentId;
+    console.log(`💳 Order ${orderId} - Payment ID: ${paymentId}`);
   }
 
-  const { data: order, error } = await supabase
+  // Usar cliente autenticado si se proporciona token, sino usar admin
+  const client = accessToken 
+    ? createSupabaseClient(accessToken) 
+    : (supabaseAdmin || supabase);
+
+  const { data: order, error } = await client
     .from('orders')
-    .update(updateData)
+    .update({
+      status,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', orderId)
     .select()
     .single();
@@ -319,9 +346,12 @@ export async function updateOrderStatusWithPayment(
 
 /**
  * Obtiene el user_id de una orden
+ * Usa cliente admin porque es llamada desde webhooks
  */
 export async function getOrderUserId(orderId: string): Promise<string | null> {
-  const { data: order, error } = await supabase
+  const client = supabaseAdmin || supabase;
+  
+  const { data: order, error } = await client
     .from('orders')
     .select('user_id')
     .eq('id', orderId)
@@ -336,10 +366,13 @@ export async function getOrderUserId(orderId: string): Promise<string | null> {
 
 
 /**
- * Obtiene productos por sus IDs (para Mercado Pago)
+ * Obtiene productos por sus IDs
+ * Usa cliente admin porque puede ser llamada desde contextos sin autenticación
  */
 export async function getProductsByIds(productIds: number[]) {
-  const { data: products, error } = await supabase
+  const client = supabaseAdmin || supabase;
+  
+  const { data: products, error } = await client
     .from('products')
     .select('*')
     .in('id', productIds);
