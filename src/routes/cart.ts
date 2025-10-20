@@ -53,7 +53,8 @@ const ProductSummary = z.object({
   id: z.string(),
   name: z.string(),
   price: z.number().positive(),
-  image_url: z.string().url().optional()
+  image_url: z.string().url().optional(),
+  stock_quantity: z.number().int().min(0).optional()
 })
 
 const CartItem = z.object({
@@ -63,13 +64,17 @@ const CartItem = z.object({
   quantity: z.number().int().min(1),
   created_at: z.string(),
   updated_at: z.string(),
-  product: ProductSummary.optional()
+  product: ProductSummary.optional(),
+  max_quantity: z.number().int().min(0).optional(), // Stock disponible
+  is_available: z.boolean().optional(), // Si el producto aún existe
+  has_enough_stock: z.boolean().optional() // Si hay suficiente stock
 })
 
 const Cart = z.object({
   items: z.array(CartItem),
   total: z.number().min(0),
-  itemCount: z.number().int().min(0)
+  itemCount: z.number().int().min(0),
+  valid: z.boolean().optional() // Si todos los items son válidos
 })
 
 const AddToCartData = z.object({
@@ -208,6 +213,112 @@ cartRoutes.openapi(addToCartRoute, async (c) => {
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to add item to cart'
+    }, 400)
+  }
+})
+
+// Nuevo endpoint: Manejar items del carrito (agregar, actualizar o eliminar según cantidad)
+const manageCartItemData = z.object({
+  productId: z.number(),
+  quantity: z.number().int().min(0) // Permite 0 para eliminar
+})
+
+const manageCartItemRoute = createRoute({
+  method: 'post',
+  path: '/items/manage',
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: manageCartItemData
+        }
+      },
+      required: true
+    }
+  },
+  responses: {
+    200: {
+      description: 'Cart item managed (added, updated, or removed)',
+      content: {
+        'application/json': {
+          schema: z.object({
+            success: z.boolean(),
+            action: z.enum(['added', 'updated', 'removed']),
+            data: CartItem.optional(),
+            message: z.string().optional()
+          })
+        }
+      }
+    },
+    401: {
+      description: 'Not authenticated'
+    },
+    400: {
+      description: 'Failed to manage cart item'
+    }
+  }
+})
+
+cartRoutes.openapi(manageCartItemRoute, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const token = getTokenFromRequest(c)
+    const { productId, quantity } = c.req.valid('json')
+
+    if (!userId) {
+      return c.json({
+        success: false,
+        error: 'Not authenticated'
+      }, 401)
+    }
+
+    // Si quantity es 0, eliminar el item
+    if (quantity === 0) {
+      // Primero buscar el item en el carrito
+      const cart = await cartService.getUserCart(userId, token)
+      const existingItem = cart.items?.find(item => item.product_id === productId)
+      
+      if (existingItem) {
+        await cartService.removeFromCart(userId, existingItem.id, token)
+        return c.json({
+          success: true,
+          action: 'removed',
+          message: 'Item removed from cart'
+        })
+      } else {
+        return c.json({
+          success: true,
+          action: 'removed',
+          message: 'Item not in cart'
+        })
+      }
+    }
+
+    // Verificar si el item ya existe en el carrito
+    const cart = await cartService.getUserCart(userId, token)
+    const existingItem = cart.items?.find(item => item.product_id === productId)
+
+    if (existingItem) {
+      // Actualizar cantidad existente
+      const updatedItem = await cartService.updateCartItem(userId, existingItem.id, quantity, token)
+      return c.json({
+        success: true,
+        action: 'updated',
+        data: updatedItem
+      })
+    } else {
+      // Agregar nuevo item
+      const newItem = await cartService.addToCart(userId, productId, quantity, token)
+      return c.json({
+        success: true,
+        action: 'added',
+        data: newItem
+      })
+    }
+  } catch (error) {
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to manage cart item'
     }, 400)
   }
 })

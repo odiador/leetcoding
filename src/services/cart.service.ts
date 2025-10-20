@@ -48,13 +48,18 @@ export interface CartItem {
     name: string
     price: number
     image_url?: string
+    stock_quantity?: number
   }
+  max_quantity?: number // Stock disponible
+  is_available?: boolean // Si el producto aún existe
+  has_enough_stock?: boolean // Si hay suficiente stock
 }
 
 export interface Cart {
   items: CartItem[]
   total: number
   itemCount: number
+  valid?: boolean // Si todos los items son válidos
 }
 
 export async function getUserCart(userId: string, accessToken?: string): Promise<Cart> {
@@ -71,12 +76,12 @@ export async function getUserCart(userId: string, accessToken?: string): Promise
   if (cartError) {
     // Si no existe un cart para el usuario, devolver cart vacío
     if (cartError.code === 'PGRST116') {
-      return { items: [], total: 0, itemCount: 0 }
+      return { items: [], total: 0, itemCount: 0, valid: true }
     }
     throw new Error(`Failed to fetch cart: ${cartError.message}`)
   }
 
-  // Ahora obtener los items del cart
+  // Ahora obtener los items del cart con stock_quantity
   const { data: cartItems, error } = await client
     .from('cart_items')
     .select(`
@@ -85,7 +90,8 @@ export async function getUserCart(userId: string, accessToken?: string): Promise
         id,
         name,
         price,
-        image_url
+        image_url,
+        stock_quantity
       )
     `)
     .eq('cart_id', userCart.id)
@@ -94,7 +100,27 @@ export async function getUserCart(userId: string, accessToken?: string): Promise
     throw new Error(`Failed to fetch cart items: ${error.message}`)
   }
 
-  const items = cartItems || []
+  // Validar cada item contra el stock actual
+  let allValid = true
+  const items = (cartItems || []).map((item: any) => {
+    const product = item.product
+    const isAvailable = !!product // El producto aún existe
+    const stockQuantity = product?.stock_quantity || 0
+    const hasEnoughStock = item.quantity <= stockQuantity
+    const isValid = isAvailable && hasEnoughStock
+
+    if (!isValid) {
+      allValid = false
+    }
+
+    return {
+      ...item,
+      max_quantity: stockQuantity,
+      is_available: isAvailable,
+      has_enough_stock: hasEnoughStock
+    }
+  })
+
   const total = items.reduce((sum: number, item: any) => {
     const price = item.product?.price || 0
     return sum + (price * item.quantity)
@@ -103,7 +129,8 @@ export async function getUserCart(userId: string, accessToken?: string): Promise
   return {
     items,
     total,
-    itemCount: items.length
+    itemCount: items.length,
+    valid: allValid
   }
 }
 
