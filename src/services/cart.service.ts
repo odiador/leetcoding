@@ -150,7 +150,9 @@ export async function addToCart(userId: string, productId: number, quantity: num
   }
 
   if (!product || product.stock_quantity < quantity) {
-    throw new Error(`Insufficient stock. Available: ${product?.stock_quantity || 0}, Requested: ${quantity}`)
+    const availableStock = product?.stock_quantity || 0;
+    console.error(`❌ Error: la cantidad del producto sobrepasa su límite ${quantity}. Disponible: ${availableStock}`);
+    throw new Error(`la cantidad del producto sobrepasa su límite ${quantity}. Disponible: ${availableStock}`)
   }
 
   // Primero obtener o crear el cart del usuario
@@ -196,7 +198,9 @@ export async function addToCart(userId: string, productId: number, quantity: num
     const newQuantity = existingItem.quantity + quantity
     
     if (newQuantity > product.stock_quantity) {
-      throw new Error(`Insufficient stock. Available: ${product.stock_quantity}, Requested: ${newQuantity}`)
+      const availableStock = product.stock_quantity || 0;
+      console.error(`❌ Error: la cantidad del producto sobrepasa su límite ${newQuantity}. Disponible: ${availableStock}`);
+      throw new Error(`la cantidad del producto sobrepasa su límite ${newQuantity}. Disponible: ${availableStock}`)
     }
     
     const { data: updatedItem, error } = await client
@@ -291,7 +295,9 @@ export async function updateCartItem(userId: string, itemId: number, quantity: n
   }
 
   if (!product || product.stock_quantity < quantity) {
-    throw new Error(`Insufficient stock. Available: ${product?.stock_quantity || 0}, Requested: ${quantity}`)
+    const availableStock = product?.stock_quantity || 0;
+    console.error(`❌ Error: la cantidad del producto sobrepasa su límite ${quantity}. Disponible: ${availableStock}`);
+    throw new Error(`la cantidad del producto sobrepasa su límite ${quantity}. Disponible: ${availableStock}`)
   }
 
   const { data: updatedItem, error } = await client
