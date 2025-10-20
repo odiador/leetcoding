@@ -377,3 +377,128 @@ export async function verifyProductsStock(
   
   return { valid: true };
 }
+
+/**
+ * Interfaz para errores de pedidos
+ */
+export interface OrderError {
+  order_id: string
+  error_type: 'stock' | 'payment' | 'delivery' | 'key_assignment'
+  error_message: string
+  created_at: string
+}
+
+/**
+ * Calcula la exactitud del pedido (Order Accuracy)
+ * Métrica: % de pedidos entregados sin error
+ * Target: Superior al 95%
+ * 
+ * @returns Objeto con el porcentaje de exactitud y estadísticas
+ */
+export async function calculateOrderAccuracy(): Promise<{
+  accuracy: number
+  totalOrders: number
+  successfulOrders: number
+  errorOrders: number
+  meetsTarget: boolean
+}> {
+  try {
+    // Obtener total de órdenes
+    const { count: totalOrders, error: ordersError } = await supabase
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+
+    if (ordersError) {
+      console.error('Error al obtener total de órdenes:', ordersError)
+      throw ordersError
+    }
+
+    // Obtener órdenes con errores (asumiendo que existe una tabla order_errors)
+    // Si no existe, puedes contar las órdenes canceladas como proxy
+    const { count: errorOrdersCount, error: errorsError } = await supabase
+      .from('order_errors')
+      .select('order_id', { count: 'exact', head: true })
+
+    // Si la tabla order_errors no existe, usar órdenes canceladas como alternativa
+    let errorCount = 0
+    if (errorsError && errorsError.code === '42P01') {
+      // Tabla no existe, usar órdenes canceladas
+      const { count: cancelledCount } = await supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'cancelled')
+      
+      errorCount = cancelledCount || 0
+      console.log('ℹ Tabla order_errors no encontrada, usando órdenes canceladas como proxy')
+    } else if (errorsError) {
+      console.error('Error al obtener errores de órdenes:', errorsError)
+      errorCount = 0
+    } else {
+      errorCount = errorOrdersCount || 0
+    }
+
+    const total = totalOrders || 0
+    const errors = errorCount
+    const successful = total - errors
+
+    // Calcular exactitud (evitar división por cero)
+    const accuracy = total > 0 ? ((successful / total) * 100) : 100
+
+    const result = {
+      accuracy: Number(accuracy.toFixed(2)),
+      totalOrders: total,
+      successfulOrders: successful,
+      errorOrders: errors,
+      meetsTarget: accuracy >= 95
+    }
+
+    // Log con colores y formato
+    console.log('\n' + '='.repeat(60))
+    console.log('MÉTRICA: EXACTITUD DEL PEDIDO (Order Accuracy)')
+    console.log('='.repeat(60))
+    console.log(`Total de pedidos:        ${result.totalOrders}`)
+    console.log(`Pedidos correctos:       ${result.successfulOrders}`)
+    console.log(`Pedidos con error:       ${result.errorOrders}`)
+    console.log('─'.repeat(60))
+    console.log(`Exactitud:               ${result.accuracy}%`)
+    console.log(`Target (>95%):           ${result.meetsTarget ? 'CUMPLE' : 'NO CUMPLE'}`)
+    console.log('='.repeat(60) + '\n')
+
+    return result
+  } catch (error) {
+    console.error('Error al calcular exactitud del pedido:', error)
+    throw error
+  }
+}
+
+/**
+ * Registra un error en un pedido
+ * Útil para llevar tracking de problemas y calcular métricas
+ */
+export async function logOrderError(
+  orderId: string,
+  errorType: OrderError['error_type'],
+  errorMessage: string
+): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('order_errors')
+      .insert({
+        order_id: orderId,
+        error_type: errorType,
+        error_message: errorMessage,
+        created_at: new Date().toISOString()
+      })
+
+    if (error) {
+      // Si la tabla no existe, solo log el error (no fallar)
+      if (error.code === '42P01') {
+        console.warn('Tabla order_errors no existe. Considera crearla para tracking de errores.')
+      } else {
+        console.error('Error al registrar error de orden:', error)
+      }
+    }
+  } catch (err) {
+    console.error('Error al guardar error de orden:', err)
+  }
+}
