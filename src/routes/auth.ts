@@ -377,11 +377,22 @@ const updatePasswordRoute = createRoute({
   },
 });
 
+// Aplica los middlewares para validar la sesión
+authRoutes.use('/password/update', cookieToAuthHeader);
+authRoutes.use('/password/update', authMiddleware);
+
 authRoutes.openapi(updatePasswordRoute, async (c) => {
   try {
-    // Asume que un middleware ya verificó la sesión y el usuario está autenticado
+    // El authMiddleware ya validó el token y puso userId en el contexto
+    const userId = c.get('userId') as string;
+    const token = getTokenFromRequest(c);
+    
+    if (!userId || !token) {
+      return c.json({ success: false, error: 'No autenticado' }, 401);
+    }
+    
     const { newPassword } = c.req.valid('json');
-    await userService.updatePassword(newPassword);
+    await userService.updatePassword(token, newPassword);
     return c.json({ success: true, message: 'Tu contraseña ha sido actualizada.' }, 200);
   } catch (err) {
     return c.json({ success: false, error: (err as Error).message }, 400);
