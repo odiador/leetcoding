@@ -49,17 +49,20 @@ function getTokenFromRequest(c: any): string | undefined {
 }
 
 // Schemas
+const ProductSummary = z.object({
+  id: z.string(),
+  name: z.string(),
+  price: z.number().positive(),
+  image_url: z.string().url().optional()
+})
+
 const OrderItem = z.object({
   id: z.string().uuid(),
   order_id: z.string().uuid(),
-  product_id: z.string().uuid(),
+  product_id: z.number(),
   quantity: z.number().int().min(1),
   price: z.number().positive(),
-  product: z.object({
-    id: z.string().uuid(),
-    name: z.string(),
-    image_url: z.string().url().optional()
-  }).optional()
+  product: ProductSummary.optional()
 })
 
 const Order = z.object({
