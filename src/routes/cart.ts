@@ -38,12 +38,8 @@
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import * as cartService from '../services/cart.service.js'
-import { cookieToAuthHeader } from '../middlewares/cookieToAuthHeader.js'
 
 const cartRoutes = new OpenAPIHono()
-
-// Aplicar middleware para convertir cookie a Authorization header
-cartRoutes.use('*', cookieToAuthHeader)
 
 // Helper: Extrae token desde Authorization header
 function getTokenFromRequest(c: any): string | undefined {

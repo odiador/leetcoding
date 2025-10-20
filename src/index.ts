@@ -12,6 +12,7 @@ import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import { pino } from 'pino'
 import { API_URL, LOG_LEVEL, PORT } from './config/env.js'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/index.js'
+import { cookieToAuthHeader } from './middlewares/cookieToAuthHeader.js'
 import { healthRoutes, authRoutes, cartRoutes, orderRoutes, productRoutes, profileRoutes, payuRoutes} from './routes/index.js'
 
 // Importar métricas centralizadas
@@ -143,9 +144,15 @@ app.get('/', (c) => {
  * - /orders/* requiere autenticación completa
  * - /auth/me requiere autenticación completa
  * - /products/* permite autenticación opcional
+ * 
+ * IMPORTANTE: cookieToAuthHeader debe ejecutarse ANTES que authMiddleware
+ * para convertir cookies en headers Authorization correctamente.
  */
+app.use('/cart/*', cookieToAuthHeader)
 app.use('/cart/*', authMiddleware)
+app.use('/orders/*', cookieToAuthHeader)
 app.use('/orders/*', authMiddleware)
+app.use('/auth/me', cookieToAuthHeader)
 app.use('/auth/me', authMiddleware)
 app.use('/products/*', optionalAuthMiddleware)
 

@@ -363,12 +363,12 @@ export async function createPaymentPreference(
       operationDate: transactionResponse.operationDate,
       // PayU puede retornar una URL bancaria para algunos métodos de pago
       extraParameters: transactionResponse.extraParameters,
-      // Construir URL de retorno según el estado
+      // Construir URL de retorno según el estado (incluir tanto transaction_id como order_id)
       redirectUrl: transactionResponse.state === 'APPROVED' 
-        ? `${FRONTEND_URL}/payment/success?transaction_id=${transactionResponse.transactionId}`
+        ? `${FRONTEND_URL}/payment/success?transaction_id=${transactionResponse.transactionId}&order_id=${orderId}`
         : transactionResponse.state === 'DECLINED'
-        ? `${FRONTEND_URL}/payment/failure?transaction_id=${transactionResponse.transactionId}`
-        : `${FRONTEND_URL}/payment/pending?transaction_id=${transactionResponse.transactionId}`,
+        ? `${FRONTEND_URL}/payment/failure?transaction_id=${transactionResponse.transactionId}&order_id=${orderId}`
+        : `${FRONTEND_URL}/payment/pending?transaction_id=${transactionResponse.transactionId}&order_id=${orderId}`,
     };
   } catch (error: any) {
     console.error('❌ Error calling PayU API:', {

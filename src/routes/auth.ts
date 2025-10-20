@@ -412,10 +412,7 @@ const meRoute = createRoute({
   }
 })
 
-// Aplica el middleware que copia la cookie a Authorization antes del authMiddleware
-authRoutes.use('/me', cookieToAuthHeader);
-authRoutes.use('/me', authMiddleware);
-
+// El middleware cookieToAuthHeader y authMiddleware se aplican globalmente en index.ts
 authRoutes.openapi(meRoute, async (c) => {
   try {
     // El authMiddleware ya validó el token y puso userId en el contexto
