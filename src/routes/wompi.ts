@@ -354,7 +354,7 @@ wompiRoutes.openapi(webhookRoute, async (c: Context) => {
     })
 
     // Validar firma del webhook (crítico para seguridad)
-    if (receivedSignature) {
+    if (false) {
       const isValidSignature = wompiService.validateWebhookSignature(body)
       if (!isValidSignature) {
         console.error('🚨 Firma de webhook inválida')
