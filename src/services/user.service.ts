@@ -66,6 +66,31 @@ export async function signupWithEmail(
     role?: string
   }
 ) {
+  // Verificar si el email ya existe y si la cuenta está eliminada
+  try {
+    if (supabaseAdmin === null) {
+      throw new Error('Supabase admin client is not initialized')
+    }
+    const { data: existingProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('id, is_deleted')
+      .eq('email', email)
+      .single()
+
+    if (existingProfile) {
+      if (existingProfile.is_deleted === true) {
+        throw new Error('This email is associated with a deleted account and cannot be reused')
+      }
+      throw new Error('Este correo ya está en uso')
+    }
+  } catch (err: any) {
+    // Si el error es por cuenta eliminada o correo en uso, propagarlo
+    if (err.message?.includes('deleted') || err.message?.includes('en uso')) {
+      throw err
+    }
+    // Si no hay perfil (no existe), continuar con el signup
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -115,20 +140,25 @@ export async function loginWithEmail(email: string, password: string) {
   // Verificar si el usuario tiene MFA habilitado
   const client = createSupabaseClient(access_token)
   const { data: aalData } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
-  
+
   // Verificar si tiene factores MFA verificados
   const { data: factorsData } = await client.auth.mfa.listFactors()
   const verifiedFactors = factorsData?.all?.filter((f: Factor) => f.status === 'verified') || []
-  
 
-  // Obtener información adicional del perfil
+
+  // Obtener información adicional del perfil y verificar si la cuenta está eliminada
   let enrichedUser: any = { ...data.user }
   try {
     const { data: profile } = await client
       .from('profiles')
-      .select('image, country')
+      .select('image, country, is_deleted')
       .eq('id', user.id)
       .single()
+
+    // Verificar si la cuenta está eliminada
+    if (profile?.is_deleted === true) {
+      throw new Error('This account has been deleted and cannot be accessed')
+    }
 
     if (profile) {
       enrichedUser = {
@@ -137,15 +167,20 @@ export async function loginWithEmail(email: string, password: string) {
         avatar_url: profile.image || null,
         country: profile.country || null,
         two_factor_enabled: verifiedFactors.length > 0 && verifiedFactors[0].status === 'verified',
+        is_deleted: profile.is_deleted || false,
       }
     }
-  } catch (err) {
-    // Ignorar errores al obtener el perfil adicional
+  } catch (err: any) {
+    // Si el error es por cuenta eliminada, propagarlo
+    if (err.message?.includes('deleted')) {
+      throw err
+    }
+    // Ignorar otros errores al obtener el perfil adicional
     console.error('Error fetching profile during login:', err)
   }
 
   // Si tiene MFA verificado pero el nivel actual es AAL1, requiere verificación adicional
-    if (verifiedFactors.length > 0 && (aalData?.currentLevel === 'aal1' || aalData?.currentLevel === null)) {
+  if (verifiedFactors.length > 0 && (aalData?.currentLevel === 'aal1' || aalData?.currentLevel === null)) {
     // No guardar la sesión completa en Redis aún
     // Guardar una sesión temporal con prefijo "mfa_pending:"
     await redisService.set(`mfa_pending:${access_token}`, user.id, 300) // 5 minutos para completar MFA
@@ -218,19 +253,19 @@ export async function requestPasswordReset(email: string) {
  */
 export async function updatePassword(accessToken: string, newPassword: string) {
   if (accessToken) {
-      const { data, error } = await supabase.auth.updateUser({
-        password: newPassword,
-      })
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    })
 
-      if (error) {
-        throw new Error(`Password update failed: ${error.message}`)
-      }
-      if (!data.user) {
-        throw new Error('Password update failed: no user returned')
-      }
-
-      return { user: data.user, error }
+    if (error) {
+      throw new Error(`Password update failed: ${error.message}`)
     }
+    if (!data.user) {
+      throw new Error('Password update failed: no user returned')
+    }
+
+    return { user: data.user, error }
+  }
 
   throw new Error('Access token is required to update password')
 }
@@ -246,6 +281,28 @@ export async function refreshSession(refreshToken: string) {
 
   if (data.session) {
     const { access_token, refresh_token, expires_in, user } = data.session
+
+    // Verificar si la cuenta está eliminada antes de refrescar la sesión
+    try {
+      const client = createSupabaseClient(access_token)
+      const { data: profile } = await client
+        .from('profiles')
+        .select('is_deleted')
+        .eq('id', user.id)
+        .single()
+
+      if (profile?.is_deleted === true) {
+        throw new Error('This account has been deleted and cannot be accessed')
+      }
+    } catch (err: any) {
+      // Si el error es por cuenta eliminada, propagarlo
+      if (err.message?.includes('deleted')) {
+        throw err
+      }
+      // Ignorar otros errores de perfil
+      console.error('Error checking profile during session refresh:', err)
+    }
+
     await redisService.set(`session:${access_token}`, user.id, expires_in)
     // Rotate refresh token: delete old key and store new one with TTL
     try {
@@ -305,7 +362,7 @@ export async function enrollMfa(accessToken: string): Promise<AuthMFAEnrollTOTPR
     // Enroll un nuevo factor TOTP
 
 
-    
+
     // 🔍 Listar todos los factores para este usuario
     const { data: factorsData, error: listError } = await client.auth.mfa.listFactors()
     if (listError) {
@@ -319,7 +376,7 @@ export async function enrollMfa(accessToken: string): Promise<AuthMFAEnrollTOTPR
       }
     }
 
-    
+
     const { data, error } = await client.auth.mfa.enroll({ factorType: 'totp' })
 
     if (error) {
@@ -654,7 +711,7 @@ export function onAuthStateChange(
 export async function getUserByAccessToken(access_token: string) {
   const client = createSupabaseClient(access_token)
   const { data: authData, error } = await client.auth.getUser()
-  
+
   if (error || !authData?.user) {
     return { data: authData, error }
   }
@@ -663,9 +720,17 @@ export async function getUserByAccessToken(access_token: string) {
     // Obtener información adicional del perfil
     const { data: profile } = await client
       .from('profiles')
-      .select('image, country')
+      .select('image, country, is_deleted')
       .eq('id', authData.user.id)
       .single()
+
+    // Verificar si la cuenta está eliminada
+    if (profile?.is_deleted === true) {
+      return {
+        data: null,
+        error: new Error('This account has been deleted and cannot be accessed'),
+      }
+    }
 
     // Verificar si tiene MFA habilitado
     const { data: factorsData } = await client.auth.mfa.listFactors()
@@ -678,13 +743,18 @@ export async function getUserByAccessToken(access_token: string) {
       avatar_url: profile?.image || null,
       country: profile?.country || null,
       two_factor_enabled: hasVerifiedMFA,
+      is_deleted: profile?.is_deleted || false,
     }
 
     return {
       data: { user: enrichedUser },
       error: null,
     }
-  } catch (err) {
+  } catch (err: any) {
+    // Si el error es por cuenta eliminada, propagarlo
+    if (err.message?.includes('deleted')) {
+      return { data: null, error: err }
+    }
     // Si falla la consulta adicional, retornar solo los datos de auth
     console.error('Error fetching additional user data:', err)
     return { data: authData, error: null }
@@ -759,10 +829,10 @@ export const completeMFALogin = async (newAccessToken: string, refreshToken: str
   if (process.env.NODE_ENV === 'development') {
     // Solo guardar la nueva sesión, skip verificación pendiente
     await redisService.set(`session:${newAccessToken}`, userId, expiresIn)
-    
+
     const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
     await redisService.set(`refresh:${refreshToken}`, userId, refreshTtlSeconds)
-    
+
     return { success: true }
   }
 
@@ -774,7 +844,7 @@ export const completeMFALogin = async (newAccessToken: string, refreshToken: str
 
   await redisService.del(`mfa_pending:${originalTempToken}`)
   await redisService.set(`session:${newAccessToken}`, userId, expiresIn)
-  
+
   const refreshTtlSeconds = (parseInt(process.env.REFRESH_TOKEN_TTL_DAYS || '7', 10) || 7) * 24 * 60 * 60
   await redisService.set(`refresh:${refreshToken}`, userId, refreshTtlSeconds)
 
