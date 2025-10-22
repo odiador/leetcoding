@@ -342,10 +342,10 @@ export class WompiService {
     })
 
     // Validar firma primero
-    const isValidSignature = this.validateWebhookSignature(event)
-    if (!isValidSignature && this.eventsSecret) {
-      return { success: false, message: 'Invalid signature' }
-    }
+//    const isValidSignature = this.validateWebhookSignature(event)
+//    if (!isValidSignature && this.eventsSecret) {
+//      return { success: false, message: 'Invalid signature' }
+//    }
 
     const { transaction } = event.data
 
