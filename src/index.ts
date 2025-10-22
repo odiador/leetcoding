@@ -13,7 +13,7 @@ import { pino } from 'pino'
 import { API_URL, LOG_LEVEL, PORT } from './config/env.js'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/index.js'
 import { cookieToAuthHeader } from './middlewares/cookieToAuthHeader.js'
-import { healthRoutes, authRoutes, cartRoutes, orderRoutes, productRoutes, profileRoutes, wompiRoutes} from './routes/index.js'
+import { healthRoutes, authRoutes, cartRoutes, orderRoutes, productRoutes, profileRoutes, wompiRoutes, adminUserRoutes} from './routes/index.js'
 
 // Importar métricas centralizadas
 import {
@@ -169,6 +169,7 @@ app.route('/orders', orderRoutes)
 // Mercado Pago deshabilitado
 // PayU deshabilitado
 app.route('/wompi', wompiRoutes)
+app.route('/admin/users', adminUserRoutes)
 
 // -------------------- Redis health --------------------
 /**

@@ -1,3 +1,4 @@
+
 /**
  * @fileoverview Servicio de usuarios para Mercador.
  * Maneja operaciones relacionadas con autenticación, perfiles de usuario y MFA.
@@ -113,6 +114,112 @@ export async function signupWithEmail(
   if (!data.user) throw new Error('Signup failed: no user returned')
 
   return { data, error }
+}
+
+/**
+ * Listar todos los usuarios (solo para admin)
+ * @param {string} adminId - ID del usuario que solicita (debe ser admin)
+ * @param {string} [accessToken] - Token de acceso opcional
+ * @returns {Promise<UserProfile[]>} Lista de perfiles de usuario
+ * @throws {Error} Si el usuario no es admin o hay error en la consulta
+ */
+export async function getAllUsers(adminId: string, accessToken?: string): Promise<UserProfile[]> {
+  let client = supabase
+  if (accessToken) {
+    client = createSupabaseClient(accessToken)
+  }
+  // Verificar que el usuario sea admin
+  const { data: adminProfile, error: adminError } = await client
+    .from('profiles')
+    .select('role')
+    .eq('id', adminId)
+    .single()
+  if (adminError || !adminProfile) throw new Error('No autorizado')
+  if (adminProfile.role !== 'admin') throw new Error('No autorizado')
+
+  // Listar todos los usuarios (puedes filtrar eliminados si hay campo is_deleted)
+  const { data: users, error } = await client
+    .from('profiles')
+    .select('id, email, full_name, role, image, country, created_at, updated_at, is_deleted')
+    // .eq('is_deleted', false) // Descomenta si tienes campo is_deleted
+  if (error) throw new Error('Error al obtener usuarios')
+  return (users ?? []).map((u: any) => ({
+    ...u,
+    avatar_url: u.image,
+  }))
+}
+
+/**
+ * Actualizar datos de un usuario (solo admin)
+ * @param {string} adminId - ID del admin
+ * @param {string} userId - ID del usuario a actualizar
+ * @param {Partial<UserProfile>} updateData - Datos a actualizar
+ * @param {string} [accessToken] - Token de acceso opcional
+ * @returns {Promise<UserProfile>} Perfil actualizado
+ */
+export async function adminUpdateUser(adminId: string, userId: string, updateData: Partial<UserProfile>, accessToken?: string): Promise<UserProfile> {
+  // Usar siempre el cliente admin para ignorar RLS
+  const client = supabaseAdmin ?? supabase;
+  // Verificar admin
+  const { data: adminProfile, error: adminError } = await client
+    .from('profiles')
+    .select('role')
+    .eq('id', adminId)
+    .single()
+  if (adminError || !adminProfile) throw new Error('No autorizado')
+  if (adminProfile.role !== 'admin') throw new Error('No autorizado')
+
+  // Solo permitir actualizar campos permitidos
+  const allowedFields = ['full_name', 'country', 'email']
+  const filteredUpdate: Record<string, any> = {}
+  for (const key of allowedFields) {
+    if (updateData[key as keyof typeof updateData] !== undefined) {
+      filteredUpdate[key] = updateData[key as keyof typeof updateData]
+    }
+  }
+
+  // Actualizar usuario en profiles (incluyendo email)
+  const { data: user, error } = await client
+    .from('profiles')
+    .update(filteredUpdate)
+    .eq('id', userId)
+    .select()
+    .single()
+  if (error) {
+    console.error('Supabase update error:', error);
+    throw new Error('Error al actualizar usuario')
+  }
+  return user as UserProfile
+}
+
+/**
+ * Eliminar usuario (soft delete, solo admin)
+ * @param {string} adminId - ID del admin
+ * @param {string} userId - ID del usuario a eliminar
+ * @param {string} [accessToken] - Token de acceso opcional
+ * @returns {Promise<{ success: boolean }>} Resultado
+ */
+export async function adminDeleteUser(adminId: string, userId: string, accessToken?: string): Promise<{ success: boolean }> {
+  let client = supabase
+  if (accessToken) {
+    client = createSupabaseClient(accessToken)
+  }
+  // Verificar admin
+  const { data: adminProfile, error: adminError } = await client
+    .from('profiles')
+    .select('role')
+    .eq('id', adminId)
+    .single()
+  if (adminError || !adminProfile) throw new Error('No autorizado')
+  if (adminProfile.role !== 'admin') throw new Error('No autorizado')
+
+  // Soft delete: marcar is_deleted=true (ajusta si tu tabla tiene otro campo)
+  const { error } = await client
+    .from('profiles')
+    .update({ is_deleted: true })
+    .eq('id', userId)
+  if (error) throw new Error('Error al eliminar usuario')
+  return { success: true }
 }
 
 /**
