@@ -334,6 +334,12 @@ export class WompiService {
    * @returns Resultado del procesamiento
    */
   async processWebhookEvent(event: WompiWebhookEvent): Promise<{ success: boolean; message: string }> {
+    // Check if transaction data exists
+    if (!event.data || !event.data.transaction) {
+      console.error('❌ Evento sin datos de transacción')
+      return { success: false, message: 'Faltan datos de transacción' }
+    }
+
     console.log('📬 Webhook de Wompi recibido:', {
       event: event.event,
       transactionId: event.data.transaction.id,
@@ -400,7 +406,7 @@ export class WompiService {
           console.log('❓ Estado desconocido para orden:', orderId, transaction.status)
       }
 
-      return { success: true, message: `Order ${orderId} updated to ${transaction.status}` }
+      return { success: true, message: `Order ${reference} updated to ${transaction.status}` }
     } catch (error) {
       console.error('❌ Error procesando webhook para orden:', orderId, error)
       return { success: false, message: `Failed to update order ${orderId}: ${error instanceof Error ? error.message : 'Unknown error'}` }

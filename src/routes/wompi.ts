@@ -159,6 +159,7 @@ const generateSignatureRoute = createRoute({
 wompiRoutes.openapi(generateSignatureRoute, async (c: Context) => {
   try {
     const body = await c.req.json()
+    console.log('Request body:', body)
     const { amount, currency, reference } = body
 
     if (!amount || !currency || !reference) {
