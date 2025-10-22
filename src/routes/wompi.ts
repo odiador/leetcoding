@@ -16,67 +16,6 @@ const wompiRoutes = new OpenAPIHono()
 const wompiService = new WompiService()
 
 /**
- * Schema para crear una transacción
- */
-const CreateTransactionSchema = z.object({
-  amount: z.number().positive().describe('Monto de la transacción (en la moneda original, no centavos)'),
-  currency: z.string().default('COP').describe('Código de moneda (COP, USD, etc.)'),
-  reference: z.string().describe('Referencia única de la transacción'),
-  customer: z.object({
-    email: z.string().email().describe('Email del cliente'),
-    fullName: z.string().optional().describe('Nombre completo del cliente'),
-    phoneNumber: z.string().optional().describe('Número de teléfono'),
-    legalId: z.string().optional().describe('Número de identificación'),
-    legalIdType: z.string().optional().describe('Tipo de identificación (CC, CE, NIT, etc.)'),
-  }),
-  shippingAddress: z.object({
-    addressLine1: z.string().describe('Dirección línea 1'),
-    city: z.string().describe('Ciudad'),
-    region: z.string().optional().describe('Región o estado'),
-    country: z.string().describe('País'),
-    phoneNumber: z.string().optional().describe('Teléfono de contacto'),
-  }).optional(),
-  redirectUrl: z.string().url().optional().describe('URL de redirección después del pago'),
-})
-
-/**
- * Schema de respuesta de transacción creada (incluye firma de integridad)
- */
-const TransactionResponseSchema = z.object({
-  success: z.boolean(),
-  signature: z.string().describe('Firma de integridad para el Widget de Wompi'),
-  data: z.object({
-    id: z.string(),
-    reference: z.string(),
-    amount_in_cents: z.number(),
-    currency: z.string(),
-    status: z.string(),
-    payment_link_url: z.string().optional(),
-    redirect_url: z.string().optional(),
-    customer_email: z.string(),
-    created_at: z.string(),
-  }),
-})
-
-/**
- * Schema de respuesta de consulta de estado (sin firma)
- */
-const TransactionStatusResponseSchema = z.object({
-  success: z.boolean(),
-  data: z.object({
-    id: z.string(),
-    reference: z.string(),
-    amount_in_cents: z.number(),
-    currency: z.string(),
-    status: z.string(),
-    payment_link_url: z.string().optional(),
-    redirect_url: z.string().optional(),
-    customer_email: z.string(),
-    created_at: z.string(),
-  }),
-})
-
-/**
  * Schema de respuesta de error
  */
 const ErrorResponseSchema = z.object({
@@ -401,11 +340,31 @@ const webhookRoute = createRoute({
 wompiRoutes.openapi(webhookRoute, async (c: Context) => {
   try {
     const body = await c.req.json()
+    const receivedSignature = c.req.header('x-integrity-signature')
     
     console.log('📬 Webhook de Wompi recibido:', {
       event: body.event,
       timestamp: body.timestamp,
+      hasSignature: !!receivedSignature,
     })
+
+    // Validar firma del webhook (crítico para seguridad)
+    if (receivedSignature) {
+      const isValidSignature = wompiService.validateWebhookSignature(body)
+      if (!isValidSignature) {
+        console.error('🚨 Firma de webhook inválida')
+        return c.json(
+          {
+            success: false,
+            error: 'Invalid webhook signature',
+          },
+          400
+        )
+      }
+      console.log('✅ Firma de webhook validada correctamente')
+    } else {
+      console.warn('⚠️ Webhook sin firma - considera rechazarlo en producción')
+    }
 
     // Procesar el evento del webhook
     const result = await wompiService.processWebhookEvent(body)

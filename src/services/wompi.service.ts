@@ -120,10 +120,13 @@ export class WompiService {
   }
 
   /**
-   * Genera la firma de integridad para el Widget de Wompi
+   * Genera la firma de integridad para el Widget de Wompi (Checkout Embed)
    * 
-   * Según documentación de Wompi:
+   * Según documentación de Wompi para Widget/Checkout:
    * SHA256("<Referencia><Monto><Moneda><SecretoIntegridad>")
+   * 
+   * ⚠️ IMPORTANTE: Esta es la fórmula para el Widget embebido.
+   * Si necesitas crear transacciones vía API /v1/transactions, usa generateApiSignature()
    * 
    * @param reference Referencia única de la transacción
    * @param amountInCents Monto en centavos
@@ -135,7 +138,7 @@ export class WompiService {
       throw new Error('WOMPI_EVENTS_SECRET (Integrity Secret) no está configurada')
     }
 
-    // Concatenar según documentación: <Referencia><Monto><Moneda><SecretoIntegridad>
+    // Fórmula para Widget Embed: reference + amount + currency + secret
     const concatenated = `${reference}${amountInCents}${currency}${this.eventsSecret}`
     
     // Generar hash SHA256
@@ -144,10 +147,50 @@ export class WompiService {
       .update(concatenated)
       .digest('hex')
 
-    console.log('🔐 Firma de integridad generada para:', {
+    console.log('🔐 Firma de integridad (Widget) generada para:', {
       reference,
       amountInCents,
       currency,
+      type: 'WIDGET_EMBED',
+      signature,
+    })
+
+    return signature
+  }
+
+  /**
+   * Genera la firma de integridad para transacciones vía API /v1/transactions
+   * 
+   * Según documentación de Wompi para API:
+   * SHA256("<Monto><Moneda><Referencia><SecretoIntegridad>")
+   * 
+   * ⚠️ NOTA: Este método NO se usa en la implementación actual (Widget Embed).
+   * Solo se incluye para referencia futura si se necesita integración server-to-server.
+   * 
+   * @param reference Referencia única de la transacción
+   * @param amountInCents Monto en centavos
+   * @param currency Moneda (ej: COP)
+   * @returns Firma de integridad en formato hexadecimal
+   */
+  generateApiSignature(reference: string, amountInCents: number, currency: string): string {
+    if (!this.eventsSecret) {
+      throw new Error('WOMPI_EVENTS_SECRET (Integrity Secret) no está configurada')
+    }
+
+    // Fórmula para API: amount + currency + reference + secret (orden diferente)
+    const concatenated = `${amountInCents}${currency}${reference}${this.eventsSecret}`
+    
+    // Generar hash SHA256
+    const signature = crypto
+      .createHash('sha256')
+      .update(concatenated)
+      .digest('hex')
+
+    console.log('🔐 Firma de integridad (API) generada para:', {
+      reference,
+      amountInCents,
+      currency,
+      type: 'API_TRANSACTIONS',
       signature,
     })
 
