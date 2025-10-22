@@ -278,6 +278,7 @@ export class WompiService {
       // Construir el string para la firma según la documentación de Wompi
       const properties = event.signature.properties.sort()
       let concatenatedValues = ''
+      const extractedValues: Record<string, any> = {}
 
       for (const prop of properties) {
         const keys = prop.split('.')
@@ -290,23 +291,32 @@ export class WompiService {
 
         if (value !== undefined) {
           concatenatedValues += String(value)
+          extractedValues[prop] = value
         }
       }
 
       // Calcular el checksum usando SHA256
+      const dataToHash = concatenatedValues + this.eventsSecret
       const calculatedChecksum = crypto
         .createHash('sha256')
-        .update(concatenatedValues + this.eventsSecret)
+        .update(dataToHash)
         .digest('hex')
 
       const isValid = calculatedChecksum === event.signature.checksum
 
       if (!isValid) {
         console.warn('⚠️ Firma de webhook inválida')
-        console.debug({
+        console.debug('🔍 Detalles de validación:', {
+          properties: event.signature.properties,
+          extractedValues,
+          concatenatedValues,
+          secretLength: this.eventsSecret.length,
+          dataToHash: `${concatenatedValues}[SECRET:${this.eventsSecret.substring(0, 10)}...]`,
           expected: event.signature.checksum,
           calculated: calculatedChecksum,
         })
+      } else {
+        console.log('✅ Firma de webhook validada correctamente')
       }
 
       return isValid
@@ -339,40 +349,61 @@ export class WompiService {
 
     const { transaction } = event.data
 
-    // Aquí implementa tu lógica de negocio según el estado de la transacción
-    switch (transaction.status) {
-      case 'APPROVED':
-        console.log('✅ Pago aprobado:', transaction.reference)
-        // TODO: Actualizar estado de la orden en tu base de datos
-        // TODO: Enviar email de confirmación al cliente
-        // TODO: Liberar productos del inventario
-        break
-
-      case 'DECLINED':
-        console.log('❌ Pago rechazado:', transaction.reference)
-        // TODO: Notificar al cliente del rechazo
-        // TODO: Restaurar items al carrito si es necesario
-        break
-
-      case 'PENDING':
-        console.log('⏳ Pago pendiente:', transaction.reference)
-        // TODO: Actualizar estado a pendiente
-        break
-
-      case 'VOIDED':
-        console.log('🚫 Pago anulado:', transaction.reference)
-        // TODO: Revertir la orden
-        break
-
-      case 'ERROR':
-        console.log('⚠️ Error en el pago:', transaction.reference)
-        // TODO: Registrar el error y notificar
-        break
-
-      default:
-        console.log('❓ Estado desconocido:', transaction.status)
+    // Extraer el orderId de la referencia (formato: ORDER-{orderId})
+    const reference = transaction.reference
+    if (!reference || !reference.startsWith('ORDER-')) {
+      console.error('❌ Referencia inválida:', reference)
+      return { success: false, message: 'Invalid reference format' }
     }
 
-    return { success: true, message: 'Webhook processed successfully' }
+    const orderId = reference.replace('ORDER-', '')
+    console.log('🔗 Conectando webhook con orden:', orderId)
+
+    try {
+      // Importar dinámicamente para evitar dependencias circulares
+      const { updateOrderStatusWithPayment } = await import('./order.service.js')
+
+      // Aquí implementa tu lógica de negocio según el estado de la transacción
+      switch (transaction.status) {
+        case 'APPROVED':
+          console.log('✅ Pago aprobado para orden:', orderId)
+          await updateOrderStatusWithPayment(orderId, 'confirmed', transaction.id)
+          // TODO: Enviar email de confirmación al cliente
+          // TODO: Liberar productos del inventario
+          break
+
+        case 'DECLINED':
+          console.log('❌ Pago rechazado para orden:', orderId)
+          await updateOrderStatusWithPayment(orderId, 'cancelled', transaction.id)
+          // TODO: Notificar al cliente del rechazo
+          // TODO: Restaurar items al carrito si es necesario
+          break
+
+        case 'PENDING':
+          console.log('⏳ Pago pendiente para orden:', orderId)
+          await updateOrderStatusWithPayment(orderId, 'pending', transaction.id)
+          break
+
+        case 'VOIDED':
+          console.log('🚫 Pago anulado para orden:', orderId)
+          await updateOrderStatusWithPayment(orderId, 'cancelled', transaction.id)
+          // TODO: Revertir la orden
+          break
+
+        case 'ERROR':
+          console.log('⚠️ Error en el pago para orden:', orderId)
+          await updateOrderStatusWithPayment(orderId, 'cancelled', transaction.id)
+          // TODO: Registrar el error y notificar
+          break
+
+        default:
+          console.log('❓ Estado desconocido para orden:', orderId, transaction.status)
+      }
+
+      return { success: true, message: `Order ${orderId} updated to ${transaction.status}` }
+    } catch (error) {
+      console.error('❌ Error procesando webhook para orden:', orderId, error)
+      return { success: false, message: `Failed to update order ${orderId}: ${error instanceof Error ? error.message : 'Unknown error'}` }
+    }
   }
 }
