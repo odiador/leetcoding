@@ -66,6 +66,10 @@ export const mockRedisClient = {
   connect: vi.fn(async () => undefined),
   disconnect: vi.fn(async () => undefined),
   quit: vi.fn(async () => 'OK'),
+  on: vi.fn((event: string, handler: Function) => mockRedisClient), // Para event listeners
+  once: vi.fn((event: string, handler: Function) => mockRedisClient),
+  off: vi.fn((event: string, handler?: Function) => mockRedisClient),
+  removeAllListeners: vi.fn((event?: string) => mockRedisClient),
   isOpen: true,
   isReady: true,
 }

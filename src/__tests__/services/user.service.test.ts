@@ -11,13 +11,13 @@ import {
   refreshSession,
   getUserByAccessToken,
 } from '@/services/user.service.js'
-import { mockSupabaseClient, mockSupabaseUser, mockSupabaseSession } from '../mocks/supabase.mock.js'
+import { mockSupabaseClient, mockSupabaseUser, mockSupabaseSession, resetSupabaseMocks } from '../mocks/supabase.mock.js'
 import { clearMockRedis } from '../mocks/redis.mock.js'
 
 describe('User Service', () => {
   beforeEach(() => {
     clearMockRedis()
-    vi.clearAllMocks()
+    resetSupabaseMocks() // Resetear todos los mocks de Supabase
   })
 
   describe('signupWithEmail', () => {
@@ -84,6 +84,20 @@ describe('User Service', () => {
 
   describe('loginWithEmail', () => {
     it('should successfully login a user', async () => {
+      // Mock para retornar un perfil válido (no eliminado)
+      vi.mocked(mockSupabaseClient.from).mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { 
+            id: mockSupabaseUser.id,
+            email: mockSupabaseUser.email,
+            is_deleted: false 
+          },
+          error: null,
+        }),
+      } as any)
+
       const result = await loginWithEmail('test@example.com', 'password')
 
       expect(result.user).toBeDefined()
@@ -112,6 +126,20 @@ describe('User Service', () => {
     })
 
     it('should handle MFA requirement', async () => {
+      // Mock para retornar un perfil válido (no eliminado)
+      vi.mocked(mockSupabaseClient.from).mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { 
+            id: mockSupabaseUser.id,
+            email: 'mfa@example.com',
+            is_deleted: false 
+          },
+          error: null,
+        }),
+      } as any)
+
       // Mock MFA enabled user
       vi.mocked(mockSupabaseClient.auth.mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({
         data: { currentLevel: 'aal1', nextLevel: 'aal2' },
@@ -148,6 +176,20 @@ describe('User Service', () => {
     it('should successfully refresh session', async () => {
       const refreshToken = 'test-refresh-token'
 
+      // Mock para retornar un perfil válido (no eliminado)
+      vi.mocked(mockSupabaseClient.from).mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { 
+            id: mockSupabaseUser.id,
+            email: mockSupabaseUser.email,
+            is_deleted: false 
+          },
+          error: null,
+        }),
+      } as any)
+
       const result = await refreshSession(refreshToken)
 
       expect(result).toBeDefined()
@@ -176,6 +218,22 @@ describe('User Service', () => {
 
   describe('getUserByAccessToken', () => {
     it('should get user by access token', async () => {
+      // Mock para retornar un perfil válido
+      vi.mocked(mockSupabaseClient.from).mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { 
+            id: mockSupabaseUser.id,
+            email: mockSupabaseUser.email,
+            full_name: 'Test User',
+            is_deleted: false,
+            role: 'cliente'
+          },
+          error: null,
+        }),
+      } as any)
+
       const result = await getUserByAccessToken('test-access-token')
 
       expect(result.data).toBeDefined()
